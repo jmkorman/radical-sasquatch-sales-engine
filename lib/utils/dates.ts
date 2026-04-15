@@ -97,3 +97,20 @@ export function parseDateFromText(text: string): Date | null {
   }
   return null;
 }
+
+export function getContactAgeTone(dateStr: string): "fresh" | "week" | "twoWeeks" | "month" | "unknown" {
+  const days = daysSince(dateStr);
+  if (!Number.isFinite(days)) return "unknown";
+  if (days >= 30) return "month";
+  if (days >= 14) return "twoWeeks";
+  if (days >= 7) return "week";
+  return "fresh";
+}
+
+export function getContactAgeClass(dateStr: string): string {
+  const tone = getContactAgeTone(dateStr);
+  if (tone === "month") return "bg-red-500/10 text-red-200 border border-red-400/20";
+  if (tone === "twoWeeks") return "bg-orange-500/10 text-orange-200 border border-orange-400/20";
+  if (tone === "week") return "bg-yellow-500/10 text-yellow-100 border border-yellow-300/20";
+  return "";
+}

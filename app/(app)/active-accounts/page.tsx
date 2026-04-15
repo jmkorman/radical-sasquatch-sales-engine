@@ -4,11 +4,15 @@ import { useEffect, useMemo, useState } from "react";
 import { useSheetStore } from "@/stores/useSheetStore";
 import { useTrashStore, DeletedEntry } from "@/stores/useTrashStore";
 import { AnyAccount } from "@/types/accounts";
-import { formatDateShort, dateToTimestamp } from "@/lib/utils/dates";
+import { ActivityLog } from "@/types/activity";
+import { OrderRecord } from "@/types/orders";
+import { formatDateShort, dateToTimestamp, getContactAgeClass } from "@/lib/utils/dates";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { SearchBar } from "@/components/ui/SearchBar";
 import Link from "next/link";
+import { countsAsContact } from "@/lib/activity/helpers";
+import { getOrderStats } from "@/lib/orders/helpers";
 
 export default function ActiveAccountsPage() {
   const [accounts, setAccounts] = useState<AnyAccount[]>([]);
@@ -17,14 +21,42 @@ export default function ActiveAccountsPage() {
   const [showTrash, setShowTrash] = useState(false);
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<"recent" | "oldest" | "name" | "order">("recent");
+  const [logs, setLogs] = useState<ActivityLog[]>([]);
+  const [orders, setOrders] = useState<OrderRecord[]>([]);
   const { data } = useSheetStore();
   const { entries: trash, removeFromTrash, clearTrash } = useTrashStore();
 
   useEffect(() => {
     if (data?.activeAccounts) {
-      setAccounts(data.activeAccounts);
+      setAccounts(
+        data.activeAccounts.filter((account) =>
+          account.account.toLowerCase().includes("leever")
+        )
+      );
     }
   }, [data]);
+
+  useEffect(() => {
+    async function loadSupportingData() {
+      try {
+        const [activityResponse, ordersResponse] = await Promise.all([
+          fetch("/api/activity"),
+          fetch("/api/orders"),
+        ]);
+        if (activityResponse.ok) {
+          setLogs(await activityResponse.json());
+        }
+        if (ordersResponse.ok) {
+          setOrders(await ordersResponse.json());
+        }
+      } catch {
+        setLogs([]);
+        setOrders([]);
+      }
+    }
+
+    loadSupportingData();
+  }, []);
 
   const handleEditStart = (cellId: string, value: string) => {
     setEditingCell(cellId);
@@ -144,6 +176,46 @@ export default function ActiveAccountsPage() {
     [visibleAccounts]
   );
 
+  const latestContactByAccount = useMemo(() => {
+    const map: Record<string, ActivityLog | null> = {};
+    const sorted = [...logs].sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    );
+
+    for (const log of sorted) {
+      if (!countsAsContact(log)) continue;
+      if (!map[log.account_id]) {
+        map[log.account_id] = log;
+      }
+    }
+
+    return map;
+  }, [logs]);
+
+  const nextFollowUpByAccount = useMemo(() => {
+    const map: Record<string, string> = {};
+    const sorted = [...logs].sort(
+      (a, b) => new Date(a.follow_up_date || "9999-12-31").getTime() - new Date(b.follow_up_date || "9999-12-31").getTime()
+    );
+
+    for (const log of sorted) {
+      if (!log.follow_up_date) continue;
+      if (!map[log.account_id]) {
+        map[log.account_id] = log.follow_up_date;
+      }
+    }
+
+    return map;
+  }, [logs]);
+
+  const ordersByAccount = useMemo(() => {
+    const map: Record<string, OrderRecord[]> = {};
+    for (const order of orders) {
+      map[order.account_id] = [...(map[order.account_id] ?? []), order];
+    }
+    return map;
+  }, [orders]);
+
   return (
     <div className="p-6 max-w-7xl mx-auto">
       <div className="flex justify-between items-center mb-6">
@@ -254,18 +326,28 @@ export default function ActiveAccountsPage() {
                 <th className="text-left py-3 px-4 text-rs-gold font-semibold">Status</th>
                 <th className="text-left py-3 px-4 text-rs-gold font-semibold">Next Steps</th>
                 <th className="text-left py-3 px-4 text-rs-gold font-semibold">Last Contact</th>
+                <th className="text-left py-3 px-4 text-rs-gold font-semibold">Next Follow-Up</th>
                 <th className="text-left py-3 px-4 text-rs-gold font-semibold">Recent Purchase</th>
+                <th className="text-left py-3 px-4 text-rs-gold font-semibold">Lifetime Ordered</th>
+                <th className="text-left py-3 px-4 text-rs-gold font-semibold">Orders</th>
                 <th className="text-left py-3 px-4 text-rs-gold font-semibold">Email</th>
                 <th className="text-left py-3 px-4 text-rs-gold font-semibold">Phone</th>
                 <th className="text-center py-3 px-4 text-rs-gold font-semibold">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {visibleAccounts.map((account) => (
-                <tr
-                  key={`${account._tabSlug}_${account._rowIndex}`}
-                  className="border-b border-rs-border hover:bg-rs-surface transition-colors"
-                >
+              {visibleAccounts.map((account) => {
+                const accountId = `${account._tabSlug}_${account._rowIndex}`;
+                const latestContact = latestContactByAccount[accountId];
+                const followUpDate = nextFollowUpByAccount[accountId];
+                const stats = getOrderStats(ordersByAccount[accountId] ?? []);
+                const displayLastContact = latestContact?.created_at || account.contactDate;
+
+                return (
+                  <tr
+                    key={`${account._tabSlug}_${account._rowIndex}`}
+                    className="border-b border-rs-border hover:bg-rs-surface transition-colors"
+                  >
                   <td className="py-3 px-4">
                     <div className="font-medium text-white">{account.account}</div>
                     <Link
@@ -378,13 +460,24 @@ export default function ActiveAccountsPage() {
                     )}
                   </td>
 
-                  <td className="py-3 px-4 text-gray-400">
-                    {account.contactDate
-                      ? formatDateShort(account.contactDate)
+                  <td className={`py-3 px-4 text-gray-400 ${getContactAgeClass(displayLastContact)}`}>
+                    {displayLastContact
+                      ? formatDateShort(displayLastContact)
                       : "-"}
                   </td>
+                  <td className="py-3 px-4 text-[#d8ccfb]">
+                    {followUpDate ? formatDateShort(followUpDate) : "-"}
+                  </td>
                   <td className="py-3 px-4 text-rs-cream">
-                    {"order" in account && account.order ? account.order : "-"}
+                    {stats.latest
+                      ? `$${stats.latest.amount.toLocaleString("en-US", { maximumFractionDigits: 0 })}`
+                      : ("order" in account && account.order ? account.order : "-")}
+                  </td>
+                  <td className="py-3 px-4 text-rs-cream">
+                    ${stats.total.toLocaleString("en-US", { maximumFractionDigits: 0 })}
+                  </td>
+                  <td className="py-3 px-4 text-[#d8ccfb]">
+                    {stats.count}
                   </td>
                   <td className="py-3 px-4 text-gray-400 text-xs truncate max-w-xs">
                     {account.email || "-"}
@@ -401,8 +494,9 @@ export default function ActiveAccountsPage() {
                       Delete
                     </button>
                   </td>
-                </tr>
-              ))}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
           </div>

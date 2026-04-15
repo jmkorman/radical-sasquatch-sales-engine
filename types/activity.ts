@@ -1,4 +1,6 @@
 export type ActionType = "call" | "email" | "in-person" | "note";
+export type ActivitySource = "manual" | "local" | "internal" | "research" | "order" | "notion";
+export type ActivityKind = "outreach" | "note" | "research" | "order";
 
 export interface ActivityLog {
   id: string;
@@ -12,8 +14,10 @@ export interface ActivityLog {
   status_after: string | null;
   follow_up_date: string | null;
   notion_task_id: string | null;
-  source: string;
+  source: ActivitySource | string;
   created_at: string;
+  activity_kind?: ActivityKind;
+  counts_as_contact?: boolean;
 }
 
 export interface OutreachFormData {

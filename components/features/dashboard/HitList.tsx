@@ -34,6 +34,9 @@ export function HitList({ items }: { items: HitListItem[] }) {
       status_before: modalAccount.status,
       status_after: data.statusAfter,
       follow_up_date: data.followUpDate || null,
+      source: "manual",
+      activity_kind: "outreach",
+      counts_as_contact: true,
     });
 
     // Also try Supabase (non-blocking)
@@ -50,6 +53,9 @@ export function HitList({ items }: { items: HitListItem[] }) {
         status_before: modalAccount.status,
         status_after: data.statusAfter,
         follow_up_date: data.followUpDate || null,
+        source: "manual",
+        activity_kind: "outreach",
+        counts_as_contact: true,
       }),
     }).catch(() => {});
 

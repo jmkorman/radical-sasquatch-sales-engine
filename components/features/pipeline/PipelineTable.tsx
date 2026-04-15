@@ -10,7 +10,7 @@ import { formatPhone } from "@/lib/utils/phone";
 import { useSheetStore } from "@/stores/useSheetStore";
 import { useOutreachStore, OutreachEntry } from "@/stores/useOutreachStore";
 import { LogOutreachModal } from "@/components/features/dashboard/LogOutreachModal";
-import { todayISO, daysSince, dateToTimestamp, parseAppDate } from "@/lib/utils/dates";
+import { todayISO, daysSince, dateToTimestamp, parseAppDate, getContactAgeClass } from "@/lib/utils/dates";
 import { parseActivityNote } from "@/lib/activity/notes";
 import Link from "next/link";
 
@@ -141,6 +141,9 @@ export function PipelineTable({ data }: { data: AllTabsData }) {
       status_before: modalAccount.status,
       status_after: outreachData.statusAfter,
       follow_up_date: outreachData.followUpDate || null,
+      source: "manual",
+      activity_kind: "outreach",
+      counts_as_contact: true,
     });
 
     fetch("/api/activity", {
@@ -156,6 +159,9 @@ export function PipelineTable({ data }: { data: AllTabsData }) {
         status_before: modalAccount.status,
         status_after: outreachData.statusAfter,
         follow_up_date: outreachData.followUpDate || null,
+        source: "manual",
+        activity_kind: "outreach",
+        counts_as_contact: true,
       }),
     }).catch(() => {});
 
@@ -317,10 +323,9 @@ export function PipelineTable({ data }: { data: AllTabsData }) {
                       </div>
                     </td>
 
-                    <td className="px-4 py-3 hidden sm:table-cell">
+                    <td className={`px-4 py-3 hidden sm:table-cell ${getContactAgeClass(account.contactDate)}`}>
                       <span className={
-                        daysAgo !== null && daysAgo > 14 ? "text-red-400 font-medium" :
-                        daysAgo !== null && daysAgo > 7 ? "text-orange-400" :
+                        daysAgo !== null && daysAgo > 14 ? "font-medium" :
                         daysAgo === 0 ? "text-rs-gold" :
                         "text-gray-300"
                       }>

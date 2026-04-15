@@ -1,8 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AnyAccount } from "@/types/accounts";
 import { ActivityLog, ActionType } from "@/types/activity";
+import { OrderRecord } from "@/types/orders";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -12,15 +13,17 @@ import { PitchReminder } from "./PitchReminder";
 import { ActivityLogList } from "./ActivityLog";
 import { QuickActions } from "./QuickActions";
 import { LogOutreachModal } from "@/components/features/dashboard/LogOutreachModal";
-import { todayISO, formatDate } from "@/lib/utils/dates";
-import { formatPhone } from "@/lib/utils/phone";
+import { todayISO, formatDate, formatDateShort } from "@/lib/utils/dates";
 import { formatActivityNote } from "@/lib/activity/notes";
 import { useOutreachStore, OutreachEntry } from "@/stores/useOutreachStore";
 import { useTrashStore } from "@/stores/useTrashStore";
+import { countsAsContact } from "@/lib/activity/helpers";
 import { STATUS_VALUES } from "@/lib/utils/constants";
 import { Select } from "@/components/ui/Select";
 import { ContactManager } from "./ContactManager";
 import { PlaybookPanel } from "./PlaybookPanel";
+import { getOrderStats } from "@/lib/orders/helpers";
+import { useSheetStore } from "@/stores/useSheetStore";
 
 function localEntryToLog(e: OutreachEntry, rowIndex: number): ActivityLog {
   return {
@@ -48,6 +51,7 @@ interface AccountDetailProps {
 export function AccountDetail({ account, logs }: AccountDetailProps) {
   const outreachStore = useOutreachStore();
   const deletedLogIds = useTrashStore((state) => state.deletedLogs.map((entry) => entry.id));
+  const { fetchAllTabs } = useSheetStore();
   const accountId = `${account._tabSlug}_${account._rowIndex}`;
 
   const [showLogModal, setShowLogModal] = useState(false);
@@ -80,6 +84,31 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
   const [saving, setSaving] = useState(false);
   const [savingNote, setSavingNote] = useState(false);
   const [savingDetails, setSavingDetails] = useState(false);
+  const [orders, setOrders] = useState<OrderRecord[]>([]);
+  const [loadingOrders, setLoadingOrders] = useState(true);
+  const [loggingOrder, setLoggingOrder] = useState(false);
+  const [orderDraft, setOrderDraft] = useState({
+    orderDate: todayISO(),
+    amount: "",
+    notes: "",
+  });
+
+  useEffect(() => {
+    async function loadOrders() {
+      try {
+        const response = await fetch(`/api/orders?accountId=${accountId}`);
+        if (!response.ok) throw new Error("Failed to load orders");
+        const data: OrderRecord[] = await response.json();
+        setOrders(data);
+      } catch {
+        setOrders([]);
+      } finally {
+        setLoadingOrders(false);
+      }
+    }
+
+    loadOrders();
+  }, [accountId]);
 
   const contactName = "contactName" in account ? account.contactName : "";
   const primaryContact = detailDraft.contactName || contactName;
@@ -89,10 +118,17 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
     return journalEntries.filter((entry) => !deletedSet.has(entry.id));
   }, [deletedLogIds, journalEntries]);
 
-  const lastTouch = visibleJournalEntries[0]?.created_at ?? account.contactDate ?? null;
+  const lastContactLog = useMemo(
+    () => visibleJournalEntries.find((entry) => countsAsContact(entry)) ?? null,
+    [visibleJournalEntries]
+  );
+  const lastTouch = lastContactLog?.created_at ?? account.contactDate ?? null;
   const followUpsScheduled = visibleJournalEntries.filter((log) => Boolean(log.follow_up_date)).length;
   const journalCountLabel = `${visibleJournalEntries.length} ${visibleJournalEntries.length === 1 ? "entry" : "entries"}`;
-  const mostRecentPurchase = "order" in account ? detailDraft.order || "No order logged" : "Tracked outside Active Accounts";
+  const orderStats = useMemo(() => getOrderStats(orders), [orders]);
+  const mostRecentPurchase = orderStats.latest
+    ? `$${orderStats.latest.amount.toLocaleString("en-US", { maximumFractionDigits: 0 })} on ${formatDateShort(orderStats.latest.order_date)}`
+    : ("order" in account ? detailDraft.order || "No order logged" : "Tracked outside Active Accounts");
 
   const timelineStats = useMemo(
     () => ({
@@ -103,6 +139,11 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
     }),
     [visibleJournalEntries]
   );
+
+  const nextFollowUp = useMemo(() => {
+    const nextLog = visibleJournalEntries.find((entry) => Boolean(entry.follow_up_date));
+    return nextLog?.follow_up_date ?? "";
+  }, [visibleJournalEntries]);
 
   const saveField = async (field: "notes" | "nextSteps", value: string) => {
     setSaving(true);
@@ -146,6 +187,9 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
     note: string;
     followUpDate?: string;
     statusAfter?: string;
+    source?: string;
+    activityKind?: "outreach" | "note" | "research" | "order";
+    countsAsContact?: boolean;
   }) => {
     const statusAfter = entry.statusAfter ?? currentStatus;
 
@@ -159,6 +203,9 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
       status_before: currentStatus,
       status_after: statusAfter,
       follow_up_date: entry.followUpDate || null,
+      source: entry.source ?? (entry.actionType === "note" ? "internal" : "manual"),
+      activity_kind: entry.activityKind ?? (entry.actionType === "note" ? "note" : "outreach"),
+      counts_as_contact: entry.countsAsContact ?? (entry.actionType !== "note"),
     });
 
     // Build the new log entry for local state
@@ -174,8 +221,10 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
       status_after: statusAfter || null,
       follow_up_date: entry.followUpDate || null,
       notion_task_id: null,
-      source: "local",
+      source: (storedEntry.source as ActivityLog["source"]) ?? "local",
       created_at: storedEntry.created_at,
+      activity_kind: storedEntry.activity_kind,
+      counts_as_contact: storedEntry.counts_as_contact,
     };
     setJournalEntries((existing) => [localLog, ...existing]);
 
@@ -193,6 +242,9 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
         status_before: currentStatus,
         status_after: statusAfter,
         follow_up_date: entry.followUpDate || null,
+        source: entry.source ?? (entry.actionType === "note" ? "internal" : "manual"),
+        activity_kind: entry.activityKind ?? (entry.actionType === "note" ? "note" : "outreach"),
+        counts_as_contact: entry.countsAsContact ?? (entry.actionType !== "note"),
       }),
     }).catch(() => {});
 
@@ -220,6 +272,7 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
     });
     setCurrentStatus(data.statusAfter);
     setNextSteps(data.note);
+    await fetchAllTabs();
 
     if (data.followUpDate) {
       try {
@@ -251,12 +304,66 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
       await addJournalEntry({
         actionType: "note",
         note,
+        source: "internal",
+        activityKind: "note",
+        countsAsContact: false,
       });
       setQuickSummary("");
       setQuickDetails("");
       setQuickNextStep("");
     } finally {
       setSavingNote(false);
+    }
+  };
+
+  const handleLogOrder = async () => {
+    const amount = parseFloat(orderDraft.amount);
+    if (!Number.isFinite(amount)) return;
+
+    setLoggingOrder(true);
+    try {
+      const response = await fetch("/api/orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          account_id: accountId,
+          account_name: account.account,
+          tab: account._tabSlug,
+          order_date: orderDraft.orderDate,
+          amount,
+          notes: orderDraft.notes || null,
+        }),
+      });
+
+      if (response.ok) {
+        const created: OrderRecord = await response.json();
+        setOrders((existing) => [created, ...existing]);
+      }
+
+      if (account._tab === "Active Accounts") {
+        await fetch("/api/sheets/update", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            tab: account._tab,
+            rowIndex: account._rowIndex,
+            order: `$${amount.toFixed(0)}`,
+          }),
+        });
+      }
+
+      setDetailDraft((prev) => ({
+        ...prev,
+        order: `$${amount.toFixed(0)}`,
+      }));
+      setOrderDraft({
+        orderDate: todayISO(),
+        amount: "",
+        notes: "",
+      });
+      await fetchAllTabs();
+    } finally {
+      setLoggingOrder(false);
     }
   };
 
@@ -274,7 +381,7 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
                   <h2 className="text-xl font-bold text-white">{detailDraft.accountName}</h2>
                   <div className="mt-1 flex flex-wrap items-center gap-2">
                     <Badge status={currentStatus} />
-                    <span className="text-sm text-gray-400">{account.type}</span>
+                    <span className="text-sm text-gray-400">{detailDraft.type || account.type}</span>
                     {lastTouch && (
                       <span className="text-xs text-[#af9fe6]">
                         Last touch {formatDate(lastTouch)}
@@ -395,6 +502,11 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
                   <SnapshotStat label="Calls Logged" value={String(timelineStats.calls)} />
                   <SnapshotStat label="Emails Logged" value={String(timelineStats.emails)} />
                   <SnapshotStat label="Meetings Logged" value={String(timelineStats.meetings)} />
+                  <SnapshotStat label="Orders Logged" value={String(orderStats.count)} />
+                  <SnapshotStat
+                    label="Lifetime Ordered"
+                    value={`$${orderStats.total.toLocaleString("en-US", { maximumFractionDigits: 0 })}`}
+                  />
                 </div>
               </div>
             </Card>
@@ -410,9 +522,9 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
           </div>
 
           <Card>
-            <div className="space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
                   <div className="text-[11px] uppercase tracking-[0.3em] text-[#af9fe6]">Account Folder</div>
                   <div className="mt-1 text-sm text-[#d8ccfb]">
                     {journalCountLabel}
@@ -423,6 +535,12 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
                   {followUpsScheduled} follow-up{followUpsScheduled === 1 ? "" : "s"} scheduled
                 </div>
               </div>
+
+              {nextFollowUp && (
+                <div className="rounded-xl border border-rs-gold/30 bg-rs-gold/10 px-3 py-2 text-sm text-rs-cream">
+                  Next follow-up: {formatDate(nextFollowUp)}
+                </div>
+              )}
 
               <Textarea
                 label="Next Steps"
@@ -437,6 +555,72 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
                 onBlur={() => saveField("notes", notes)}
               />
               {saving && <div className="text-xs text-gray-500">Saving...</div>}
+            </div>
+          </Card>
+
+          <Card>
+            <div className="space-y-3">
+              <div>
+                <div className="text-[11px] uppercase tracking-[0.3em] text-[#af9fe6]">Order Log</div>
+                <div className="mt-1 text-sm text-[#d8ccfb]">
+                  Track order history here. The latest order rolls up into Active Accounts.
+                </div>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-[160px_160px_minmax(0,1fr)]">
+                <Input
+                  label="Order Date"
+                  type="date"
+                  value={orderDraft.orderDate}
+                  onChange={(e) => setOrderDraft((prev) => ({ ...prev, orderDate: e.target.value }))}
+                />
+                <Input
+                  label="Amount"
+                  inputMode="decimal"
+                  value={orderDraft.amount}
+                  onChange={(e) => setOrderDraft((prev) => ({ ...prev, amount: e.target.value }))}
+                  placeholder="250"
+                />
+                <Input
+                  label="Notes"
+                  value={orderDraft.notes}
+                  onChange={(e) => setOrderDraft((prev) => ({ ...prev, notes: e.target.value }))}
+                  placeholder="Restock for patio weekend, first reorder, test run"
+                />
+              </div>
+
+              <div className="flex justify-end">
+                <Button onClick={handleLogOrder} disabled={loggingOrder || !orderDraft.amount.trim()}>
+                  {loggingOrder ? "Logging..." : "Log Order"}
+                </Button>
+              </div>
+
+              {loadingOrders ? (
+                <div className="text-sm text-[#af9fe6]">Loading orders...</div>
+              ) : orders.length === 0 ? (
+                <div className="rounded-xl border border-rs-border/60 bg-black/10 px-3 py-3 text-sm text-[#d8ccfb]">
+                  No orders logged yet.
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {orders.map((order) => (
+                    <div
+                      key={order.id}
+                      className="rounded-xl border border-rs-border/60 bg-black/10 px-3 py-3 text-sm"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="font-semibold text-rs-cream">
+                          ${order.amount.toLocaleString("en-US", { maximumFractionDigits: 0 })}
+                        </div>
+                        <div className="text-xs text-[#af9fe6]">{formatDate(order.order_date)}</div>
+                      </div>
+                      {order.notes && (
+                        <div className="mt-2 text-[#d8ccfb]">{order.notes}</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </Card>
 
