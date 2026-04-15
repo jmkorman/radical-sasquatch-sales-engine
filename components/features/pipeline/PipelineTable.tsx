@@ -391,6 +391,7 @@ export function PipelineTable({ data }: { data: AllTabsData }) {
                             setEditingCell({ key: `${account._tabSlug}_${account._rowIndex}`, field });
                             setEditValue(value);
                           }}
+                          onEditChange={(value) => setEditValue(value)}
                           onEditSave={(field, value) => handleFieldEdit(account, field, value)}
                           onEditCancel={() => {
                             setEditingCell(null);
@@ -432,6 +433,7 @@ function ExpandedRow({
   editValue,
   onEditStart,
   onEditSave,
+  onEditChange,
   onEditCancel,
 }: {
   account: AnyAccount;
@@ -441,6 +443,7 @@ function ExpandedRow({
   editValue: string;
   onEditStart: (field: string, value: string) => void;
   onEditSave: (field: string, value: string) => void;
+  onEditChange: (value: string) => void;
   onEditCancel: () => void;
 }) {
   const hasLocation = "location" in account && account.location;
@@ -464,7 +467,7 @@ function ExpandedRow({
                 <input
                   type="text"
                   value={editValue}
-                  onChange={(e) => setEditValue(e.target.value)}
+                  onChange={(e) => onEditChange(e.target.value)}
                   onBlur={() => onEditSave("CONTACT_NAME", editValue)}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") onEditSave("CONTACT_NAME", editValue);
@@ -490,7 +493,7 @@ function ExpandedRow({
                 <input
                   type="email"
                   value={editValue}
-                  onChange={(e) => setEditValue(e.target.value)}
+                  onChange={(e) => onEditChange(e.target.value)}
                   onBlur={() => onEditSave("EMAIL", editValue)}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") onEditSave("EMAIL", editValue);
@@ -521,7 +524,7 @@ function ExpandedRow({
                 <input
                   type="tel"
                   value={editValue}
-                  onChange={(e) => setEditValue(e.target.value)}
+                  onChange={(e) => onEditChange(e.target.value)}
                   onBlur={() => onEditSave("PHONE", editValue)}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") onEditSave("PHONE", editValue);
