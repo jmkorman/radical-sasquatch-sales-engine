@@ -38,7 +38,6 @@ function getAccountsForTab(data: AllTabsData, tab: TabName): AnyAccount[] {
     case "Retail": return data.retail;
     case "Catering": return data.catering;
     case "Food Truck": return data.foodTruck;
-    case "Active Accounts": return data.activeAccounts;
   }
 }
 
@@ -196,7 +195,7 @@ export function PipelineTable({ data }: { data: AllTabsData }) {
   return (
     <div className="flex flex-col gap-5">
       <Tabs
-        tabs={[...TAB_NAMES]}
+        tabs={TAB_NAMES.filter(t => t !== "Active Accounts")}
         activeTab={activeTab}
         onChange={(t) => { setActiveTab(t as TabName); setExpanded(null); setStatusFilter(""); }}
       />
@@ -271,8 +270,7 @@ export function PipelineTable({ data }: { data: AllTabsData }) {
               <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-gray-500">Account</th>
               <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-gray-500">Status</th>
               <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-gray-500 hidden sm:table-cell">Last Contact</th>
-              <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-gray-500 hidden md:table-cell">Contact Person</th>
-              <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-gray-500 hidden lg:table-cell">Phone</th>
+              <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-gray-500 hidden md:table-cell">Latest Note</th>
             </tr>
           </thead>
           <tbody>
@@ -309,18 +307,21 @@ export function PipelineTable({ data }: { data: AllTabsData }) {
                     </td>
 
                     <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
-                      <div className="flex flex-col gap-1.5">
-                        <Badge status={account.status} />
-                        <select
-                          value={account.status}
-                          onChange={(e) => handleStatusChange(account, e.target.value)}
-                          className="bg-rs-bg text-[11px] border border-rs-border/50 rounded-md px-1.5 py-1 text-gray-400 focus:border-rs-gold focus:outline-none cursor-pointer hover:border-rs-border transition-colors w-fit"
-                        >
-                          {STATUS_VALUES.map(s => (
-                            <option key={s} value={s} className="bg-rs-bg">{s || "(none)"}</option>
-                          ))}
-                        </select>
-                      </div>
+                      <select
+                        value={account.status}
+                        onChange={(e) => handleStatusChange(account, e.target.value)}
+                        className="appearance-none bg-rs-bg text-[11px] border border-rs-border/50 rounded-md px-2 py-1.5 text-gray-300 focus:border-rs-gold focus:outline-none cursor-pointer hover:border-rs-border transition-colors font-medium"
+                        style={{
+                          backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2399a3a6' d='M6 9L1 4h10z'/%3E%3C/svg%3E")`,
+                          backgroundRepeat: 'no-repeat',
+                          backgroundPosition: 'right 4px center',
+                          paddingRight: '20px',
+                        }}
+                      >
+                        {STATUS_VALUES.map(s => (
+                          <option key={s} value={s} className="bg-rs-bg">{s || "(none)"}</option>
+                        ))}
+                      </select>
                     </td>
 
                     <td className={`px-4 py-3 hidden sm:table-cell ${getContactAgeClass(account.contactDate)}`}>
@@ -333,15 +334,17 @@ export function PipelineTable({ data }: { data: AllTabsData }) {
                       </span>
                     </td>
 
-                    <td className="px-4 py-3 text-gray-400 hidden md:table-cell">
-                      {account.contactName}
-                    </td>
-
-                    <td className="px-4 py-3 hidden lg:table-cell" onClick={e => e.stopPropagation()}>
-                      {account.phone && (
-                        <a href={`tel:${account.phone}`} className="text-gray-400 hover:text-rs-gold transition-colors">
-                          {formatPhone(account.phone)}
-                        </a>
+                    <td className="px-4 py-3 hidden md:table-cell" onClick={e => e.stopPropagation()}>
+                      {outreachLogs.length > 0 ? (
+                        <div className="text-gray-400 text-xs leading-relaxed line-clamp-2">
+                          {outreachLogs[outreachLogs.length - 1].note}
+                        </div>
+                      ) : account.nextSteps ? (
+                        <div className="text-gray-400 text-xs leading-relaxed line-clamp-2">
+                          {account.nextSteps}
+                        </div>
+                      ) : (
+                        <span className="text-gray-600">—</span>
                       )}
                     </td>
                   </tr>
