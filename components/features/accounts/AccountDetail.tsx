@@ -16,6 +16,7 @@ import { todayISO, formatDate } from "@/lib/utils/dates";
 import { formatPhone } from "@/lib/utils/phone";
 import { formatActivityNote } from "@/lib/activity/notes";
 import { useOutreachStore, OutreachEntry } from "@/stores/useOutreachStore";
+import { useTrashStore } from "@/stores/useTrashStore";
 import { STATUS_VALUES } from "@/lib/utils/constants";
 import { Select } from "@/components/ui/Select";
 import { ContactManager } from "./ContactManager";
@@ -46,6 +47,7 @@ interface AccountDetailProps {
 
 export function AccountDetail({ account, logs }: AccountDetailProps) {
   const outreachStore = useOutreachStore();
+  const deletedLogIds = useTrashStore((state) => state.deletedLogs.map((entry) => entry.id));
   const accountId = `${account._tabSlug}_${account._rowIndex}`;
 
   const [showLogModal, setShowLogModal] = useState(false);
@@ -82,19 +84,24 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
   const contactName = "contactName" in account ? account.contactName : "";
   const primaryContact = detailDraft.contactName || contactName;
 
-  const lastTouch = journalEntries[0]?.created_at ?? account.contactDate ?? null;
-  const followUpsScheduled = journalEntries.filter((log) => Boolean(log.follow_up_date)).length;
-  const journalCountLabel = `${journalEntries.length} ${journalEntries.length === 1 ? "entry" : "entries"}`;
+  const visibleJournalEntries = useMemo(() => {
+    const deletedSet = new Set(deletedLogIds);
+    return journalEntries.filter((entry) => !deletedSet.has(entry.id));
+  }, [deletedLogIds, journalEntries]);
+
+  const lastTouch = visibleJournalEntries[0]?.created_at ?? account.contactDate ?? null;
+  const followUpsScheduled = visibleJournalEntries.filter((log) => Boolean(log.follow_up_date)).length;
+  const journalCountLabel = `${visibleJournalEntries.length} ${visibleJournalEntries.length === 1 ? "entry" : "entries"}`;
   const mostRecentPurchase = "order" in account ? detailDraft.order || "No order logged" : "Tracked outside Active Accounts";
 
   const timelineStats = useMemo(
     () => ({
-      totalTouches: journalEntries.length,
-      calls: journalEntries.filter((entry) => entry.action_type === "call").length,
-      emails: journalEntries.filter((entry) => entry.action_type === "email").length,
-      meetings: journalEntries.filter((entry) => entry.action_type === "in-person").length,
+      totalTouches: visibleJournalEntries.length,
+      calls: visibleJournalEntries.filter((entry) => entry.action_type === "call").length,
+      emails: visibleJournalEntries.filter((entry) => entry.action_type === "email").length,
+      meetings: visibleJournalEntries.filter((entry) => entry.action_type === "in-person").length,
     }),
-    [journalEntries]
+    [visibleJournalEntries]
   );
 
   const saveField = async (field: "notes" | "nextSteps", value: string) => {
@@ -143,7 +150,7 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
     const statusAfter = entry.statusAfter ?? currentStatus;
 
     // Save to localStorage immediately (works without Supabase)
-    outreachStore.addEntry({
+    const storedEntry = outreachStore.addEntry({
       account_id: accountId,
       account_name: account.account,
       tab: account._tabSlug,
@@ -156,7 +163,7 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
 
     // Build the new log entry for local state
     const localLog: ActivityLog = {
-      id: crypto.randomUUID(),
+      id: storedEntry.id,
       account_id: accountId,
       tab: account._tabSlug,
       row_index: account._rowIndex,
@@ -168,7 +175,7 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
       follow_up_date: entry.followUpDate || null,
       notion_task_id: null,
       source: "local",
-      created_at: new Date().toISOString(),
+      created_at: storedEntry.created_at,
     };
     setJournalEntries((existing) => [localLog, ...existing]);
 
@@ -479,7 +486,7 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
 
           <Card>
             <h3 className="text-sm font-semibold text-gray-300 mb-3">Account Folder Timeline</h3>
-            <ActivityLogList logs={journalEntries} />
+            <ActivityLogList logs={visibleJournalEntries} />
           </Card>
         </div>
       </div>

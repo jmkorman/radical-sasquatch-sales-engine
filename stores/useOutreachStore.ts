@@ -18,7 +18,7 @@ export interface OutreachEntry {
 
 interface OutreachStore {
   entries: OutreachEntry[];
-  addEntry: (entry: Omit<OutreachEntry, "id" | "created_at">) => void;
+  addEntry: (entry: Omit<OutreachEntry, "id" | "created_at">) => OutreachEntry;
   getEntriesForAccount: (accountId: string) => OutreachEntry[];
   getLatestForAccount: (accountId: string) => OutreachEntry | null;
 }
@@ -37,6 +37,7 @@ export const useOutreachStore = create<OutreachStore>()(
         set((state) => ({
           entries: [newEntry, ...state.entries],
         }));
+        return newEntry;
       },
 
       getEntriesForAccount: (accountId) => {
