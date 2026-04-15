@@ -87,6 +87,67 @@ export const ACTIVE_ACCOUNTS_COLUMNS = {
   NOTES: 10,
 } as const;
 
+export function getAccountColumnIndex(tab: string): number {
+  switch (tab) {
+    case "Restaurants": return RESTAURANTS_COLUMNS.ACCOUNT;
+    case "Retail": return RETAIL_COLUMNS.ACCOUNT;
+    case "Catering": return CATERING_COLUMNS.ACCOUNT;
+    case "Food Truck": return FOOD_TRUCK_COLUMNS.ACCOUNT;
+    case "Active Accounts": return ACTIVE_ACCOUNTS_COLUMNS.ACCOUNT;
+    default: throw new Error(`Unknown tab: ${tab}`);
+  }
+}
+
+export function getTypeColumnIndex(tab: string): number {
+  switch (tab) {
+    case "Restaurants": return RESTAURANTS_COLUMNS.TYPE;
+    case "Retail": return RETAIL_COLUMNS.TYPE;
+    case "Catering": return CATERING_COLUMNS.TYPE;
+    case "Food Truck": return FOOD_TRUCK_COLUMNS.TYPE;
+    case "Active Accounts": return ACTIVE_ACCOUNTS_COLUMNS.TYPE;
+    default: throw new Error(`Unknown tab: ${tab}`);
+  }
+}
+
+export function getLocationColumnIndex(tab: string): number {
+  switch (tab) {
+    case "Restaurants": return RESTAURANTS_COLUMNS.LOCATION;
+    case "Retail": return RETAIL_COLUMNS.LOCATION;
+    case "Catering": return CATERING_COLUMNS.LOCATION;
+    case "Food Truck": return FOOD_TRUCK_COLUMNS.LOCATION;
+    default: throw new Error(`Location column not available for tab: ${tab}`);
+  }
+}
+
+export function getPhoneColumnIndex(tab: string): number {
+  switch (tab) {
+    case "Restaurants": return RESTAURANTS_COLUMNS.PHONE;
+    case "Retail": return RETAIL_COLUMNS.PHONE;
+    case "Catering": return CATERING_COLUMNS.PHONE;
+    case "Food Truck": return FOOD_TRUCK_COLUMNS.PHONE;
+    case "Active Accounts": return ACTIVE_ACCOUNTS_COLUMNS.PHONE;
+    default: throw new Error(`Unknown tab: ${tab}`);
+  }
+}
+
+export function getEmailColumnIndex(tab: string): number {
+  switch (tab) {
+    case "Restaurants": return RESTAURANTS_COLUMNS.EMAIL;
+    case "Retail": return RETAIL_COLUMNS.EMAIL;
+    case "Catering": return CATERING_COLUMNS.EMAIL;
+    case "Food Truck": return FOOD_TRUCK_COLUMNS.EMAIL;
+    case "Active Accounts": return ACTIVE_ACCOUNTS_COLUMNS.EMAIL;
+    default: throw new Error(`Unknown tab: ${tab}`);
+  }
+}
+
+export function getOrderColumnIndex(tab: string): number {
+  switch (tab) {
+    case "Active Accounts": return ACTIVE_ACCOUNTS_COLUMNS.ORDER;
+    default: throw new Error(`Order column not available for tab: ${tab}`);
+  }
+}
+
 // Convert 0-based column index to A1 notation letter
 export function indexToColumnLetter(index: number): string {
   let letter = "";
@@ -142,6 +203,18 @@ export function getNotesColumnIndex(tab: string): number {
     case "Catering": return CATERING_COLUMNS.NOTES;
     case "Food Truck": return FOOD_TRUCK_COLUMNS.NOTES;
     case "Active Accounts": return ACTIVE_ACCOUNTS_COLUMNS.NOTES;
+    default: throw new Error(`Unknown tab: ${tab}`);
+  }
+}
+
+// Get the contact name column index for a given tab (CONTACT_NAME, BUYER, CLIENT, etc.)
+export function getContactNameColumnIndex(tab: string): number {
+  switch (tab) {
+    case "Restaurants": return RESTAURANTS_COLUMNS.CONTACT_NAME;
+    case "Retail": return RETAIL_COLUMNS.BUYER;
+    case "Catering": return CATERING_COLUMNS.CONTACT_NAME;
+    case "Food Truck": return FOOD_TRUCK_COLUMNS.CLIENT;
+    case "Active Accounts": return ACTIVE_ACCOUNTS_COLUMNS.CONTACT_NAME;
     default: throw new Error(`Unknown tab: ${tab}`);
   }
 }

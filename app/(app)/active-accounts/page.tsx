@@ -1,26 +1,28 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSheetStore } from "@/stores/useSheetStore";
 import { useTrashStore, DeletedEntry } from "@/stores/useTrashStore";
 import { AnyAccount } from "@/types/accounts";
-import { STATUS_COLORS } from "@/lib/utils/constants";
-import { formatDateShort } from "@/lib/utils/dates";
+import { formatDateShort, dateToTimestamp } from "@/lib/utils/dates";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
+import { SearchBar } from "@/components/ui/SearchBar";
+import Link from "next/link";
 
 export default function ActiveAccountsPage() {
   const [accounts, setAccounts] = useState<AnyAccount[]>([]);
   const [editingCell, setEditingCell] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const [showTrash, setShowTrash] = useState(false);
+  const [search, setSearch] = useState("");
+  const [sortBy, setSortBy] = useState<"recent" | "oldest" | "name" | "order">("recent");
   const { data } = useSheetStore();
   const { entries: trash, removeFromTrash, clearTrash } = useTrashStore();
 
   useEffect(() => {
-    const activeTab = data.find((tab) => tab.tab === "Active Accounts");
-    if (activeTab) {
-      setAccounts(activeTab.accounts);
+    if (data?.activeAccounts) {
+      setAccounts(data.activeAccounts);
     }
   }, [data]);
 
@@ -34,13 +36,30 @@ export default function ActiveAccountsPage() {
     field: string,
     value: string
   ) => {
-    if (value === editValue) {
+    const currentValue =
+      field === "CONTACT_NAME"
+        ? account.contactName || ""
+        : field === "STATUS"
+          ? account.status || ""
+          : field === "NEXT_STEPS"
+            ? account.nextSteps || ""
+            : "";
+
+    if (value === currentValue) {
       setEditingCell(null);
       return;
     }
 
+    // Map field names to API parameter names
+    const fieldMap: Record<string, string> = {
+      CONTACT_NAME: "contactName",
+      STATUS: "newStatus",
+      NEXT_STEPS: "nextSteps",
+    };
+
+    const apiField = fieldMap[field] || field;
     const updates: Record<string, string> = {
-      [field]: value,
+      [apiField]: value,
     };
 
     await fetch("/api/sheets/update", {
@@ -53,6 +72,15 @@ export default function ActiveAccountsPage() {
       }),
     });
 
+    setAccounts((existing) =>
+      existing.map((item) => {
+        if (item._rowIndex !== account._rowIndex) return item;
+        if (field === "CONTACT_NAME") return { ...item, contactName: value };
+        if (field === "STATUS") return { ...item, status: value as AnyAccount["status"] };
+        if (field === "NEXT_STEPS") return { ...item, nextSteps: value };
+        return item;
+      })
+    );
     setEditingCell(null);
   };
 
@@ -76,6 +104,45 @@ export default function ActiveAccountsPage() {
     // Restore would require re-adding the row to the sheet
     // For now, just remove from trash
   };
+
+  const visibleAccounts = useMemo(() => {
+    const normalized = search.trim().toLowerCase();
+    const filtered = accounts.filter((account) => {
+      if (!normalized) return true;
+      return [
+        account.account,
+        account.contactName,
+        account.email,
+        account.phone,
+        account.nextSteps,
+        "order" in account ? account.order : "",
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(normalized);
+    });
+
+    return [...filtered].sort((a, b) => {
+      if (sortBy === "name") return a.account.localeCompare(b.account);
+      if (sortBy === "oldest") return dateToTimestamp(a.contactDate) - dateToTimestamp(b.contactDate);
+      if (sortBy === "order") {
+        const aValue = parseFloat(("order" in a ? a.order : "").replace(/[^0-9.]/g, "")) || 0;
+        const bValue = parseFloat(("order" in b ? b.order : "").replace(/[^0-9.]/g, "")) || 0;
+        return bValue - aValue;
+      }
+      return dateToTimestamp(b.contactDate) - dateToTimestamp(a.contactDate);
+    });
+  }, [accounts, search, sortBy]);
+
+  const orderTotal = useMemo(
+    () =>
+      visibleAccounts.reduce((sum, account) => {
+        const raw = "order" in account ? account.order : "";
+        const value = parseFloat(raw.replace(/[^0-9.]/g, ""));
+        return sum + (Number.isFinite(value) ? value : 0);
+      }, 0),
+    [visibleAccounts]
+  );
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
@@ -131,7 +198,54 @@ export default function ActiveAccountsPage() {
           )}
         </div>
       ) : (
-        <div className="overflow-x-auto">
+        <div className="space-y-5">
+          <div className="grid gap-3 md:grid-cols-3">
+            <div className="rounded-2xl border border-rs-border/70 bg-white/5 p-4">
+              <div className="text-[11px] uppercase tracking-[0.3em] text-[#af9fe6]">Active Deals</div>
+              <div className="mt-2 text-3xl font-black text-rs-cream">{visibleAccounts.length}</div>
+            </div>
+            <div className="rounded-2xl border border-rs-border/70 bg-white/5 p-4">
+              <div className="text-[11px] uppercase tracking-[0.3em] text-[#af9fe6]">Needs Follow Up</div>
+              <div className="mt-2 text-3xl font-black text-rs-cream">
+                {visibleAccounts.filter((account) => account.status === "Following Up").length}
+              </div>
+            </div>
+            <div className="rounded-2xl border border-rs-border/70 bg-white/5 p-4">
+              <div className="text-[11px] uppercase tracking-[0.3em] text-[#af9fe6]">Recent Purchase Total</div>
+              <div className="mt-2 text-3xl font-black text-rs-cream">
+                ${orderTotal.toLocaleString("en-US", { maximumFractionDigits: 0 })}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+            <div className="flex-1">
+              <SearchBar
+                value={search}
+                onChange={setSearch}
+                placeholder="Search account, contact, email, phone, next step, purchase"
+              />
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {[
+                ["recent", "Recent Contact"],
+                ["oldest", "Oldest Contact"],
+                ["order", "Biggest Purchase"],
+                ["name", "A to Z"],
+              ].map(([key, label]) => (
+                <Button
+                  key={key}
+                  size="sm"
+                  variant={sortBy === key ? "primary" : "secondary"}
+                  onClick={() => setSortBy(key as typeof sortBy)}
+                >
+                  {label}
+                </Button>
+              ))}
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-rs-border">
@@ -140,18 +254,27 @@ export default function ActiveAccountsPage() {
                 <th className="text-left py-3 px-4 text-rs-gold font-semibold">Status</th>
                 <th className="text-left py-3 px-4 text-rs-gold font-semibold">Next Steps</th>
                 <th className="text-left py-3 px-4 text-rs-gold font-semibold">Last Contact</th>
+                <th className="text-left py-3 px-4 text-rs-gold font-semibold">Recent Purchase</th>
                 <th className="text-left py-3 px-4 text-rs-gold font-semibold">Email</th>
                 <th className="text-left py-3 px-4 text-rs-gold font-semibold">Phone</th>
                 <th className="text-center py-3 px-4 text-rs-gold font-semibold">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {accounts.map((account) => (
+              {visibleAccounts.map((account) => (
                 <tr
                   key={`${account._tabSlug}_${account._rowIndex}`}
                   className="border-b border-rs-border hover:bg-rs-surface transition-colors"
                 >
-                  <td className="py-3 px-4 text-white font-medium">{account.account}</td>
+                  <td className="py-3 px-4">
+                    <div className="font-medium text-white">{account.account}</div>
+                    <Link
+                      href={`/accounts/${account._tabSlug}/${account._rowIndex}`}
+                      className="text-xs text-rs-gold hover:text-rs-cream"
+                    >
+                      Open account folder
+                    </Link>
+                  </td>
 
                   {/* Contact Name - Editable */}
                   <td className="py-3 px-4">
@@ -198,11 +321,11 @@ export default function ActiveAccountsPage() {
                         className="bg-rs-bg border border-rs-gold rounded px-2 py-1 text-white"
                       >
                         <option value="Contacted">Contacted</option>
-                        <option value="Qualified">Qualified</option>
-                        <option value="Demo">Demo</option>
-                        <option value="Proposal">Proposal</option>
-                        <option value="Closed Won">Closed Won</option>
-                        <option value="Not Interested">Not Interested</option>
+                        <option value="Identified">Identified</option>
+                        <option value="Researched">Researched</option>
+                        <option value="Contacted">Contacted</option>
+                        <option value="Following Up">Following Up</option>
+                        <option value="Closed - Won">Closed - Won</option>
                       </select>
                     ) : (
                       <div
@@ -260,6 +383,9 @@ export default function ActiveAccountsPage() {
                       ? formatDateShort(account.contactDate)
                       : "-"}
                   </td>
+                  <td className="py-3 px-4 text-rs-cream">
+                    {"order" in account && account.order ? account.order : "-"}
+                  </td>
                   <td className="py-3 px-4 text-gray-400 text-xs truncate max-w-xs">
                     {account.email || "-"}
                   </td>
@@ -279,10 +405,11 @@ export default function ActiveAccountsPage() {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 
-      {accounts.length === 0 && !showTrash && (
+      {visibleAccounts.length === 0 && !showTrash && (
         <div className="text-center py-12 text-gray-400">
           <p>No active accounts</p>
         </div>

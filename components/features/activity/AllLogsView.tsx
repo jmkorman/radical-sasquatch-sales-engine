@@ -8,6 +8,8 @@ import { Select } from "@/components/ui/Select";
 import { Spinner } from "@/components/ui/Spinner";
 import { ActivityLogList } from "@/components/features/accounts/ActivityLog";
 import { parseActivityNote } from "@/lib/activity/notes";
+import { Button } from "@/components/ui/Button";
+import { useTrashStore } from "@/stores/useTrashStore";
 
 const ACTION_OPTIONS = [
   { value: "all", label: "All actions" },
@@ -30,6 +32,8 @@ export function AllLogsView() {
   const [query, setQuery] = useState("");
   const [actionFilter, setActionFilter] = useState("all");
   const [tabFilter, setTabFilter] = useState("all");
+  const [showTrash, setShowTrash] = useState(false);
+  const { deletedLogs, clearLogTrash } = useTrashStore();
 
   useEffect(() => {
     async function loadLogs() {
@@ -61,8 +65,9 @@ export function AllLogsView() {
 
   const filteredLogs = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
+    const sourceLogs = showTrash ? deletedLogs.map((entry) => entry.log) : logs;
 
-    return logs.filter((log) => {
+    return sourceLogs.filter((log) => {
       if (actionFilter !== "all" && log.action_type !== actionFilter) return false;
       if (tabFilter !== "all" && log.tab !== tabFilter) return false;
 
@@ -82,7 +87,7 @@ export function AllLogsView() {
 
       return haystack.includes(normalizedQuery);
     });
-  }, [actionFilter, logs, query, tabFilter]);
+  }, [actionFilter, deletedLogs, logs, query, showTrash, tabFilter]);
 
   const followUpsScheduled = logs.filter((log) => Boolean(log.follow_up_date)).length;
   const touchesThisWeek = logs.filter((log) => {
@@ -102,6 +107,28 @@ export function AllLogsView() {
         <p className="max-w-2xl text-sm text-[#d8ccfb]">
           Search every call, email, meeting, and note across the whole pipeline.
         </p>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          variant={showTrash ? "secondary" : "primary"}
+          size="sm"
+          onClick={() => setShowTrash(false)}
+        >
+          Live Logs
+        </Button>
+        <Button
+          variant={showTrash ? "primary" : "secondary"}
+          size="sm"
+          onClick={() => setShowTrash(true)}
+        >
+          Log Trash ({deletedLogs.length})
+        </Button>
+        {showTrash && deletedLogs.length > 0 && (
+          <Button variant="ghost" size="sm" onClick={clearLogTrash}>
+            Empty Log Trash
+          </Button>
+        )}
       </div>
 
       <div className="grid gap-3 sm:grid-cols-3">
@@ -147,7 +174,7 @@ export function AllLogsView() {
             No logs match those filters yet.
           </div>
         ) : (
-          <ActivityLogList logs={filteredLogs} />
+          <ActivityLogList logs={filteredLogs} showDeleted={showTrash} />
         )}
       </Card>
     </div>

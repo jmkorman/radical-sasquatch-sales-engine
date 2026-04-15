@@ -4,6 +4,8 @@ import { ActivityLog as ActivityLogType } from "@/types/activity";
 import { formatDate } from "@/lib/utils/dates";
 import { parseActivityNote } from "@/lib/activity/notes";
 import Link from "next/link";
+import { Button } from "@/components/ui/Button";
+import { useTrashStore } from "@/stores/useTrashStore";
 
 const ACTION_ICONS: Record<string, string> = {
   call: "M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z",
@@ -12,18 +14,30 @@ const ACTION_ICONS: Record<string, string> = {
   note: "M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z",
 };
 
-export function ActivityLogList({ logs }: { logs: ActivityLogType[] }) {
-  if (logs.length === 0) {
+export function ActivityLogList({
+  logs,
+  showDeleted = false,
+}: {
+  logs: ActivityLogType[];
+  showDeleted?: boolean;
+}) {
+  const { deletedLogs, addLogToTrash, restoreLogFromTrash } = useTrashStore();
+  const deletedIds = new Set(deletedLogs.map((entry) => entry.id));
+  const visibleLogs = showDeleted
+    ? logs
+    : logs.filter((log) => !deletedIds.has(log.id));
+
+  if (visibleLogs.length === 0) {
     return (
       <div className="text-sm text-gray-500 py-4 text-center">
-        No activity logged yet
+        {showDeleted ? "No deleted logs in trash" : "No activity logged yet"}
       </div>
     );
   }
 
   return (
     <div className="space-y-3">
-      {logs.map((log) => {
+      {visibleLogs.map((log) => {
         const parsedNote = parseActivityNote(log.note);
 
         return (
@@ -73,12 +87,28 @@ export function ActivityLogList({ logs }: { logs: ActivityLogType[] }) {
                   <div className="text-xs text-[#9d8dd5]">
                     {formatDate(log.created_at)}
                   </div>
-                  <Link
-                    href={`/accounts/${log.tab}/${log.row_index}`}
-                    className="text-xs text-rs-gold hover:text-rs-cream"
-                  >
-                    Open account
-                  </Link>
+                  <div className="flex items-center gap-2">
+                    <Link
+                      href={`/accounts/${log.tab}/${log.row_index}`}
+                      className="text-xs text-rs-gold hover:text-rs-cream"
+                    >
+                      Open account
+                    </Link>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="px-2 py-1 text-xs"
+                      onClick={() => {
+                        if (showDeleted) {
+                          restoreLogFromTrash(log.id);
+                        } else {
+                          addLogToTrash(log);
+                        }
+                      }}
+                    >
+                      {showDeleted ? "Restore" : "Trash"}
+                    </Button>
+                  </div>
                 </div>
               </div>
             </div>

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useSheetStore } from "@/stores/useSheetStore";
 import { useOutreachStore } from "@/stores/useOutreachStore";
 import { HitList } from "@/components/features/dashboard/HitList";
+import { FollowUpQueue, buildFollowUpQueue } from "@/components/features/dashboard/FollowUpQueue";
 import { RecentActivity } from "@/components/features/dashboard/RecentActivity";
 import { PipelineSummaryBar } from "@/components/layout/PipelineSummaryBar";
 import { buildHitList, HitListItem } from "@/lib/dashboard/prioritizer";
@@ -83,6 +84,7 @@ export default function DashboardPage() {
   }
 
   const counts = getStatusCounts(data);
+  const followUpQueue = buildFollowUpQueue(data, localActivityMap);
 
   return (
     <div className="space-y-6">
@@ -107,6 +109,8 @@ export default function DashboardPage() {
       ) : (
         <HitList items={hitList} />
       )}
+
+      <FollowUpQueue items={followUpQueue} />
 
       <RecentActivity entries={outreachStore.entries} />
     </div>

@@ -10,7 +10,7 @@ import { formatPhone } from "@/lib/utils/phone";
 import { useSheetStore } from "@/stores/useSheetStore";
 import { useOutreachStore, OutreachEntry } from "@/stores/useOutreachStore";
 import { LogOutreachModal } from "@/components/features/dashboard/LogOutreachModal";
-import { todayISO, daysSince } from "@/lib/utils/dates";
+import { todayISO, daysSince, dateToTimestamp, parseAppDate } from "@/lib/utils/dates";
 import { parseActivityNote } from "@/lib/activity/notes";
 import Link from "next/link";
 
@@ -44,8 +44,8 @@ function getAccountsForTab(data: AllTabsData, tab: TabName): AnyAccount[] {
 
 function formatContactDate(dateStr: string): { label: string; daysAgo: number | null } {
   if (!dateStr) return { label: "—", daysAgo: null };
-  const d = new Date(dateStr);
-  if (isNaN(d.getTime())) return { label: dateStr, daysAgo: null };
+  const d = parseAppDate(dateStr);
+  if (!d) return { label: dateStr, daysAgo: null };
   const days = daysSince(dateStr);
   let label: string;
   if (days === 0) label = "Today";
@@ -87,14 +87,14 @@ export function PipelineTable({ data }: { data: AllTabsData }) {
       if (sortBy === "name") return a.account.localeCompare(b.account);
 
       if (sortBy === "stale") {
-        const aT = a.contactDate ? new Date(a.contactDate).getTime() : 0;
-        const bT = b.contactDate ? new Date(b.contactDate).getTime() : 0;
+        const aT = dateToTimestamp(a.contactDate);
+        const bT = dateToTimestamp(b.contactDate);
         return aT - bT; // oldest first = most stale
       }
 
       if (sortBy === "recent") {
-        const aT = a.contactDate ? new Date(a.contactDate).getTime() : 0;
-        const bT = b.contactDate ? new Date(b.contactDate).getTime() : 0;
+        const aT = dateToTimestamp(a.contactDate);
+        const bT = dateToTimestamp(b.contactDate);
         return bT - aT;
       }
 
@@ -102,8 +102,8 @@ export function PipelineTable({ data }: { data: AllTabsData }) {
       const aOrder = STATUS_SORT_ORDER[a.status] ?? 5;
       const bOrder = STATUS_SORT_ORDER[b.status] ?? 5;
       if (aOrder !== bOrder) return aOrder - bOrder;
-      const aT = a.contactDate ? new Date(a.contactDate).getTime() : 0;
-      const bT = b.contactDate ? new Date(b.contactDate).getTime() : 0;
+      const aT = dateToTimestamp(a.contactDate);
+      const bT = dateToTimestamp(b.contactDate);
       return aT - bT;
     });
   }, [allForTab, search, statusFilter, sortBy]);

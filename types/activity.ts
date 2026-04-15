@@ -22,3 +22,9 @@ export interface OutreachFormData {
   note: string;
   followUpDate: string;
 }
+
+export interface DeletedLogEntry {
+  id: string;
+  deleted_at: string;
+  log: ActivityLog;
+}

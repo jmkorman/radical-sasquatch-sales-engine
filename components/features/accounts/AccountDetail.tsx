@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { AnyAccount } from "@/types/accounts";
 import { ActivityLog, ActionType } from "@/types/activity";
 import { Card } from "@/components/ui/Card";
@@ -12,10 +12,14 @@ import { PitchReminder } from "./PitchReminder";
 import { ActivityLogList } from "./ActivityLog";
 import { QuickActions } from "./QuickActions";
 import { LogOutreachModal } from "@/components/features/dashboard/LogOutreachModal";
-import { todayISO } from "@/lib/utils/dates";
+import { todayISO, formatDate } from "@/lib/utils/dates";
 import { formatPhone } from "@/lib/utils/phone";
 import { formatActivityNote } from "@/lib/activity/notes";
 import { useOutreachStore, OutreachEntry } from "@/stores/useOutreachStore";
+import { STATUS_VALUES } from "@/lib/utils/constants";
+import { Select } from "@/components/ui/Select";
+import { ContactManager } from "./ContactManager";
+import { PlaybookPanel } from "./PlaybookPanel";
 
 function localEntryToLog(e: OutreachEntry, rowIndex: number): ActivityLog {
   return {
@@ -45,6 +49,15 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
   const accountId = `${account._tabSlug}_${account._rowIndex}`;
 
   const [showLogModal, setShowLogModal] = useState(false);
+  const [detailDraft, setDetailDraft] = useState({
+    accountName: account.account,
+    contactName: "contactName" in account ? account.contactName : "",
+    type: account.type || "",
+    location: "location" in account ? account.location || "" : "",
+    phone: account.phone || "",
+    email: account.email || "",
+    order: "order" in account ? account.order || "" : "",
+  });
   const [notes, setNotes] = useState(account.notes);
   const [nextSteps, setNextSteps] = useState(account.nextSteps);
   const [currentStatus, setCurrentStatus] = useState<string>(account.status);
@@ -64,12 +77,25 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
   const [quickNextStep, setQuickNextStep] = useState("");
   const [saving, setSaving] = useState(false);
   const [savingNote, setSavingNote] = useState(false);
+  const [savingDetails, setSavingDetails] = useState(false);
 
   const contactName = "contactName" in account ? account.contactName : "";
+  const primaryContact = detailDraft.contactName || contactName;
 
-  const lastTouch = journalEntries[0]?.created_at ?? null;
+  const lastTouch = journalEntries[0]?.created_at ?? account.contactDate ?? null;
   const followUpsScheduled = journalEntries.filter((log) => Boolean(log.follow_up_date)).length;
   const journalCountLabel = `${journalEntries.length} ${journalEntries.length === 1 ? "entry" : "entries"}`;
+  const mostRecentPurchase = "order" in account ? detailDraft.order || "No order logged" : "Tracked outside Active Accounts";
+
+  const timelineStats = useMemo(
+    () => ({
+      totalTouches: journalEntries.length,
+      calls: journalEntries.filter((entry) => entry.action_type === "call").length,
+      emails: journalEntries.filter((entry) => entry.action_type === "email").length,
+      meetings: journalEntries.filter((entry) => entry.action_type === "in-person").length,
+    }),
+    [journalEntries]
+  );
 
   const saveField = async (field: "notes" | "nextSteps", value: string) => {
     setSaving(true);
@@ -83,6 +109,29 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
       }),
     });
     setSaving(false);
+  };
+
+  const saveAccountDetails = async () => {
+    setSavingDetails(true);
+    try {
+      await fetch("/api/sheets/update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tab: account._tab,
+          rowIndex: account._rowIndex,
+          accountName: detailDraft.accountName,
+          contactName: detailDraft.contactName,
+          type: detailDraft.type,
+          location: "location" in account ? detailDraft.location : undefined,
+          phone: detailDraft.phone,
+          email: detailDraft.email,
+          order: "order" in account ? detailDraft.order : undefined,
+        }),
+      });
+    } finally {
+      setSavingDetails(false);
+    }
   };
 
   const addJournalEntry = async (entry: {
@@ -172,7 +221,7 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             accountName: account.account,
-            contactName,
+            contactName: primaryContact,
             followUpDate: data.followUpDate,
             accountUrl: window.location.href,
           }),
@@ -208,76 +257,150 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
     <div className="space-y-4">
       <PitchReminder accountName={account.account} />
 
-      <div className="flex flex-col sm:flex-row gap-4">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(320px,0.9fr)]">
         {/* Left column - account info */}
-        <div className="flex-1 space-y-4">
+        <div className="space-y-4">
           <Card>
             <div className="space-y-3">
-              <div className="flex items-start justify-between">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                 <div>
-                  <h2 className="text-xl font-bold text-white">{account.account}</h2>
-                  <div className="flex items-center gap-2 mt-1">
+                  <h2 className="text-xl font-bold text-white">{detailDraft.accountName}</h2>
+                  <div className="mt-1 flex flex-wrap items-center gap-2">
                     <Badge status={currentStatus} />
                     <span className="text-sm text-gray-400">{account.type}</span>
+                    {lastTouch && (
+                      <span className="text-xs text-[#af9fe6]">
+                        Last touch {formatDate(lastTouch)}
+                      </span>
+                    )}
                   </div>
                 </div>
-                <Button onClick={() => setShowLogModal(true)}>Log Outreach</Button>
+                <div className="flex flex-wrap gap-2">
+                  <Select
+                    value={currentStatus}
+                    onChange={async (e) => {
+                      const newStatus = e.target.value;
+                      setCurrentStatus(newStatus);
+                      await fetch("/api/sheets/update", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          tab: account._tab,
+                          rowIndex: account._rowIndex,
+                          newStatus,
+                        }),
+                      });
+                    }}
+                    options={STATUS_VALUES.filter((value) => value !== "").map((value) => ({
+                      value,
+                      label: value,
+                    }))}
+                    className="min-w-[180px]"
+                  />
+                  <Button onClick={() => setShowLogModal(true)}>Log Outreach</Button>
+                </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-                {contactName && (
-                  <div>
-                    <span className="text-gray-500">Contact: </span>
-                    <span className="text-white">{contactName}</span>
-                  </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                <Input
+                  label="Account Name"
+                  value={detailDraft.accountName}
+                  onChange={(e) => setDetailDraft((prev) => ({ ...prev, accountName: e.target.value }))}
+                />
+                <Input
+                  label="Primary Contact"
+                  value={detailDraft.contactName}
+                  onChange={(e) => setDetailDraft((prev) => ({ ...prev, contactName: e.target.value }))}
+                />
+                <Input
+                  label="Type"
+                  value={detailDraft.type}
+                  onChange={(e) => setDetailDraft((prev) => ({ ...prev, type: e.target.value }))}
+                />
+                {"location" in account && (
+                  <Input
+                    label="Location"
+                    value={detailDraft.location}
+                    onChange={(e) => setDetailDraft((prev) => ({ ...prev, location: e.target.value }))}
+                  />
                 )}
-                {"location" in account && account.location && (
-                  <div>
-                    <span className="text-gray-500">Location: </span>
-                    <span className="text-white">{account.location}</span>
-                  </div>
+                <Input
+                  label="Phone"
+                  value={detailDraft.phone}
+                  onChange={(e) => setDetailDraft((prev) => ({ ...prev, phone: e.target.value }))}
+                />
+                <Input
+                  label="Email"
+                  value={detailDraft.email}
+                  onChange={(e) => setDetailDraft((prev) => ({ ...prev, email: e.target.value }))}
+                />
+                {"order" in account && (
+                  <Input
+                    label="Most Recent Purchase"
+                    value={detailDraft.order}
+                    onChange={(e) => setDetailDraft((prev) => ({ ...prev, order: e.target.value }))}
+                  />
                 )}
-                {account.phone && (
-                  <div>
-                    <span className="text-gray-500">Phone: </span>
-                    <a href={`tel:${account.phone}`} className="text-rs-gold">{formatPhone(account.phone)}</a>
-                  </div>
-                )}
-                {account.email && (
-                  <div>
-                    <span className="text-gray-500">Email: </span>
-                    <a href={`mailto:${account.email}`} className="text-rs-gold">{account.email}</a>
-                  </div>
-                )}
-                {"ig" in account && account.ig && (
-                  <div>
-                    <span className="text-gray-500">Instagram: </span>
-                    <span className="text-gray-300">{account.ig}</span>
-                  </div>
-                )}
-                {"website" in account && account.website && (
-                  <div>
-                    <span className="text-gray-500">Website: </span>
-                    <a href={account.website.startsWith("http") ? account.website : `https://${account.website}`} target="_blank" rel="noopener noreferrer" className="text-rs-gold">{account.website}</a>
-                  </div>
-                )}
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-3">
                 {"kitchen" in account && (
-                  <div>
-                    <span className="text-gray-500">Kitchen: </span>
-                    <span className="text-white">{account.kitchen || "Unknown"}</span>
+                  <div className="rounded-2xl border border-rs-border/60 bg-black/10 p-3">
+                    <div className="text-[11px] uppercase tracking-[0.2em] text-[#af9fe6]">Kitchen</div>
+                    <div className="mt-2 text-sm text-rs-cream">{account.kitchen || "Unknown"}</div>
                   </div>
                 )}
-                {"estMonthlyOrder" in account && account.estMonthlyOrder && (
-                  <div>
-                    <span className="text-gray-500">Est. Monthly Order: </span>
-                    <span className="text-white">{account.estMonthlyOrder}</span>
+                {"estMonthlyOrder" in account && (
+                  <div className="rounded-2xl border border-rs-border/60 bg-black/10 p-3">
+                    <div className="text-[11px] uppercase tracking-[0.2em] text-[#af9fe6]">Est. Monthly</div>
+                    <div className="mt-2 text-sm text-rs-cream">{account.estMonthlyOrder || "Unknown"}</div>
                   </div>
                 )}
+                <div className="rounded-2xl border border-rs-border/60 bg-black/10 p-3">
+                  <div className="text-[11px] uppercase tracking-[0.2em] text-[#af9fe6]">Recent Purchase</div>
+                  <div className="mt-2 text-sm text-rs-cream">{mostRecentPurchase}</div>
+                </div>
               </div>
 
-              <QuickActions phone={account.phone} email={account.email} />
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <QuickActions phone={detailDraft.phone} email={detailDraft.email} />
+                <div className="flex items-center gap-2">
+                  {savingDetails && <span className="text-xs text-[#af9fe6]">Saving details...</span>}
+                  <Button size="sm" onClick={saveAccountDetails}>
+                    Save Account Details
+                  </Button>
+                </div>
+              </div>
             </div>
           </Card>
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Card>
+              <div className="space-y-3">
+                <div>
+                  <div className="text-[11px] uppercase tracking-[0.3em] text-[#af9fe6]">Deal Snapshot</div>
+                  <div className="mt-1 text-sm text-[#d8ccfb]">
+                    Review active deal health, latest order context, and what happens next.
+                  </div>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <SnapshotStat label="Timeline Entries" value={String(timelineStats.totalTouches)} />
+                  <SnapshotStat label="Calls Logged" value={String(timelineStats.calls)} />
+                  <SnapshotStat label="Emails Logged" value={String(timelineStats.emails)} />
+                  <SnapshotStat label="Meetings Logged" value={String(timelineStats.meetings)} />
+                </div>
+              </div>
+            </Card>
+
+            <ContactManager
+              accountId={accountId}
+              defaultContact={{
+                name: primaryContact,
+                email: detailDraft.email,
+                phone: detailDraft.phone,
+              }}
+            />
+          </div>
 
           <Card>
             <div className="space-y-3">
@@ -351,7 +474,9 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
         </div>
 
         {/* Right column - activity log */}
-        <div className="sm:w-80 lg:w-96">
+        <div className="space-y-4">
+          <PlaybookPanel account={account} />
+
           <Card>
             <h3 className="text-sm font-semibold text-gray-300 mb-3">Account Folder Timeline</h3>
             <ActivityLogList logs={journalEntries} />
@@ -366,6 +491,15 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
           onSubmit={handleSubmitOutreach}
         />
       )}
+    </div>
+  );
+}
+
+function SnapshotStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl border border-rs-border/60 bg-black/10 p-3">
+      <div className="text-[11px] uppercase tracking-[0.2em] text-[#af9fe6]">{label}</div>
+      <div className="mt-2 text-2xl font-black text-rs-cream">{value}</div>
     </div>
   );
 }

@@ -1,4 +1,6 @@
 import { create } from "zustand";
+import { persist, createJSONStorage } from "zustand/middleware";
+import { ActivityLog, DeletedLogEntry } from "@/types/activity";
 
 export interface DeletedEntry {
   id: string;
@@ -12,36 +14,59 @@ export interface DeletedEntry {
 
 interface TrashStore {
   entries: DeletedEntry[];
+  deletedLogs: DeletedLogEntry[];
   addToTrash: (entry: DeletedEntry) => void;
   removeFromTrash: (id: string) => void;
   clearTrash: () => void;
+  addLogToTrash: (log: ActivityLog) => void;
+  restoreLogFromTrash: (id: string) => void;
+  clearLogTrash: () => void;
 }
 
-export const useTrashStore = create<TrashStore>((set) => ({
-  entries: [],
+export const useTrashStore = create<TrashStore>()(
+  persist(
+    (set, get) => ({
+      entries: [],
+      deletedLogs: [],
 
-  addToTrash: (entry) =>
-    set((state) => {
-      const updated = [entry, ...state.entries];
-      if (typeof window !== "undefined") {
-        localStorage.setItem("trash", JSON.stringify(updated));
-      }
-      return { entries: updated };
+      addToTrash: (entry) =>
+        set((state) => ({
+          entries: [entry, ...state.entries.filter((item) => item.id !== entry.id)],
+        })),
+
+      removeFromTrash: (id) =>
+        set((state) => ({
+          entries: state.entries.filter((entry) => entry.id !== id),
+        })),
+
+      clearTrash: () => set({ entries: [] }),
+
+      addLogToTrash: (log) => {
+        const existing = get().deletedLogs;
+        if (existing.some((entry) => entry.id === log.id)) return;
+
+        set({
+          deletedLogs: [
+            {
+              id: log.id,
+              deleted_at: new Date().toISOString(),
+              log,
+            },
+            ...existing,
+          ],
+        });
+      },
+
+      restoreLogFromTrash: (id) =>
+        set((state) => ({
+          deletedLogs: state.deletedLogs.filter((entry) => entry.id !== id),
+        })),
+
+      clearLogTrash: () => set({ deletedLogs: [] }),
     }),
-
-  removeFromTrash: (id) =>
-    set((state) => {
-      const updated = state.entries.filter((e) => e.id !== id);
-      if (typeof window !== "undefined") {
-        localStorage.setItem("trash", JSON.stringify(updated));
-      }
-      return { entries: updated };
-    }),
-
-  clearTrash: () => {
-    if (typeof window !== "undefined") {
-      localStorage.removeItem("trash");
+    {
+      name: "trash-storage",
+      storage: createJSONStorage(() => localStorage),
     }
-    set({ entries: [] });
-  },
-}));
+  )
+);
