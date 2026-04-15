@@ -23,11 +23,26 @@ interface TrashStore {
   clearLogTrash: () => void;
 }
 
+// Initialize state from localStorage synchronously on module load
+const loadInitialState = () => {
+  if (typeof window === "undefined") return { entries: [], deletedLogs: [] };
+  try {
+    const stored = localStorage.getItem("trash-storage");
+    if (!stored) return { entries: [], deletedLogs: [] };
+    const parsed = JSON.parse(stored);
+    return parsed.state || { entries: [], deletedLogs: [] };
+  } catch {
+    return { entries: [], deletedLogs: [] };
+  }
+};
+
+const initialState = loadInitialState();
+
 export const useTrashStore = create<TrashStore>()(
   persist(
     (set, get) => ({
-      entries: [],
-      deletedLogs: [],
+      entries: initialState.entries,
+      deletedLogs: initialState.deletedLogs,
 
       addToTrash: (entry) =>
         set((state) => ({

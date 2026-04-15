@@ -3,6 +3,21 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
+// Initialize state from localStorage synchronously on module load
+const loadContactInitialState = () => {
+  if (typeof window === "undefined") return { contacts: [] };
+  try {
+    const stored = localStorage.getItem("rs-contacts");
+    if (!stored) return { contacts: [] };
+    const parsed = JSON.parse(stored);
+    return parsed.state || { contacts: [] };
+  } catch {
+    return { contacts: [] };
+  }
+};
+
+const contactInitialState = loadContactInitialState();
+
 export interface AccountContact {
   id: string;
   accountId: string;
@@ -25,7 +40,7 @@ interface ContactStore {
 export const useContactStore = create<ContactStore>()(
   persist(
     (set, get) => ({
-      contacts: [],
+      contacts: contactInitialState.contacts,
 
       addContact: (contact) =>
         set((state) => ({

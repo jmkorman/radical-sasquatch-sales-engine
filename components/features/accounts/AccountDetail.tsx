@@ -50,7 +50,7 @@ interface AccountDetailProps {
 
 export function AccountDetail({ account, logs }: AccountDetailProps) {
   const outreachStore = useOutreachStore();
-  const deletedLogIds = useTrashStore((state) => state.deletedLogs.map((entry) => entry.id));
+  const deletedLogs = useTrashStore((state) => state.deletedLogs);
   const { fetchAllTabs } = useSheetStore();
   const accountId = `${account._tabSlug}_${account._rowIndex}`;
 
@@ -114,9 +114,9 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
   const primaryContact = detailDraft.contactName || contactName;
 
   const visibleJournalEntries = useMemo(() => {
-    const deletedSet = new Set(deletedLogIds);
+    const deletedSet = new Set(deletedLogs.map((e) => e.id));
     return journalEntries.filter((entry) => !deletedSet.has(entry.id));
-  }, [deletedLogIds, journalEntries]);
+  }, [deletedLogs, journalEntries]);
 
   const lastContactLog = useMemo(
     () => visibleJournalEntries.find((entry) => countsAsContact(entry)) ?? null,

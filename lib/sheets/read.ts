@@ -151,31 +151,61 @@ async function getTabRaw(tabName: string): Promise<string[][]> {
 export async function getRestaurants(): Promise<RestaurantAccount[]> {
   const rows = await getTabRaw("Restaurants");
   if (rows.length <= 1) return [];
-  return rows.slice(1).map((row, i) => mapRestaurant(row, i + 2));
+  return rows
+    .slice(1)
+    .map((row, i) => mapRestaurant(row, i + 2))
+    .filter((a) => {
+      const name = a.account.trim().toLowerCase();
+      return name !== "" && name !== "targets";
+    });
 }
 
 export async function getRetail(): Promise<RetailAccount[]> {
   const rows = await getTabRaw("Retail");
   if (rows.length <= 1) return [];
-  return rows.slice(1).map((row, i) => mapRetail(row, i + 2));
+  return rows
+    .slice(1)
+    .map((row, i) => mapRetail(row, i + 2))
+    .filter((a) => {
+      const name = a.account.trim().toLowerCase();
+      return name !== "" && name !== "targets";
+    });
 }
 
 export async function getCatering(): Promise<CateringAccount[]> {
   const rows = await getTabRaw("Catering");
   if (rows.length <= 1) return [];
-  return rows.slice(1).map((row, i) => mapCatering(row, i + 2));
+  return rows
+    .slice(1)
+    .map((row, i) => mapCatering(row, i + 2))
+    .filter((a) => {
+      const name = a.account.trim().toLowerCase();
+      return name !== "" && name !== "targets";
+    });
 }
 
 export async function getFoodTruck(): Promise<FoodTruckAccount[]> {
   const rows = await getTabRaw("Food Truck");
   if (rows.length <= 1) return [];
-  return rows.slice(1).map((row, i) => mapFoodTruck(row, i + 2));
+  return rows
+    .slice(1)
+    .map((row, i) => mapFoodTruck(row, i + 2))
+    .filter((a) => {
+      const name = a.account.trim().toLowerCase();
+      return name !== "" && name !== "targets";
+    });
 }
 
 export async function getActiveAccounts(): Promise<ActiveAccount[]> {
   const rows = await getTabRaw("Active Accounts");
   if (rows.length <= 1) return [];
-  return rows.slice(1).map((row, i) => mapActiveAccount(row, i + 2));
+  return rows
+    .slice(1)
+    .map((row, i) => mapActiveAccount(row, i + 2))
+    .filter((a) => {
+      const name = a.account.trim().toLowerCase();
+      return name !== "" && name !== "targets";
+    });
 }
 
 export async function getAllTabs(): Promise<AllTabsData> {

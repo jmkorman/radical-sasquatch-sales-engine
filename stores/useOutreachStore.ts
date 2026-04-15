@@ -3,6 +3,21 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
+// Initialize state from localStorage synchronously on module load
+const loadOutreachInitialState = () => {
+  if (typeof window === "undefined") return { entries: [] };
+  try {
+    const stored = localStorage.getItem("rs-outreach-log");
+    if (!stored) return { entries: [] };
+    const parsed = JSON.parse(stored);
+    return parsed.state || { entries: [] };
+  } catch {
+    return { entries: [] };
+  }
+};
+
+const outreachInitialState = loadOutreachInitialState();
+
 export interface OutreachEntry {
   id: string;
   account_id: string;
@@ -29,7 +44,7 @@ interface OutreachStore {
 export const useOutreachStore = create<OutreachStore>()(
   persist(
     (set, get) => ({
-      entries: [],
+      entries: outreachInitialState.entries,
 
       addEntry: (entry) => {
         const newEntry: OutreachEntry = {
