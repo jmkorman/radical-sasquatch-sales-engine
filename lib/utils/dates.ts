@@ -34,6 +34,15 @@ export function todayISO(): string {
   return new Date().toISOString().split("T")[0];
 }
 
+// Format as "M/DD" for Google Sheets (e.g., "4/15")
+export function formatDateForSheet(date: Date | string): string {
+  const d = typeof date === "string" ? new Date(date) : date;
+  if (isNaN(d.getTime())) return "";
+  const month = d.getMonth() + 1;
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${month}/${day}`;
+}
+
 // Parse dates from free-text like "Follow up 4/18" or "Call 04/20/2026"
 const DATE_PATTERNS = [
   /(\d{1,2})\/(\d{1,2})\/(\d{4})/,  // MM/DD/YYYY

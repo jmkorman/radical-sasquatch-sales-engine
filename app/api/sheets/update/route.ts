@@ -6,6 +6,7 @@ import {
   getNextStepsColumnIndex,
   getNotesColumnIndex,
 } from "@/lib/sheets/schema";
+import { formatDateForSheet } from "@/lib/utils/dates";
 
 export async function POST(request: NextRequest) {
   try {
@@ -25,10 +26,11 @@ export async function POST(request: NextRequest) {
       await updateCell(tab, rowIndex, col, newStatus);
     }
 
-    // Update contact date if provided
+    // Update contact date if provided (format as M/DD for sheets)
     if (contactDate !== undefined) {
       const col = getContactDateColumnIndex(tab);
-      await updateCell(tab, rowIndex, col, contactDate);
+      const formattedDate = formatDateForSheet(contactDate);
+      await updateCell(tab, rowIndex, col, formattedDate);
     }
 
     // Update next steps if provided
