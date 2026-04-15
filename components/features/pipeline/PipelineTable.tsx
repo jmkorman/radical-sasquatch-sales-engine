@@ -12,6 +12,7 @@ import { useOutreachStore, OutreachEntry } from "@/stores/useOutreachStore";
 import { LogOutreachModal } from "@/components/features/dashboard/LogOutreachModal";
 import { todayISO, daysSince, dateToTimestamp, parseAppDate, getContactAgeClass } from "@/lib/utils/dates";
 import { parseActivityNote } from "@/lib/activity/notes";
+import { getPhoneColumnIndex, getEmailColumnIndex, getContactNameColumnIndex } from "@/lib/sheets/schema";
 import Link from "next/link";
 
 const STATUS_SORT_ORDER: Record<string, number> = {
@@ -61,6 +62,8 @@ export function PipelineTable({ data }: { data: AllTabsData }) {
   const [sortBy, setSortBy] = useState<SortBy>("status");
   const [expanded, setExpanded] = useState<string | null>(null);
   const [modalAccount, setModalAccount] = useState<AnyAccount | null>(null);
+  const [editingCell, setEditingCell] = useState<{ key: string; field: string } | null>(null);
+  const [editValue, setEditValue] = useState("");
   const { fetchAllTabs } = useSheetStore();
   const outreachStore = useOutreachStore();
 
@@ -122,6 +125,31 @@ export function PipelineTable({ data }: { data: AllTabsData }) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ tab: account._tab, rowIndex: account._rowIndex, newStatus }),
     });
+    await fetchAllTabs();
+  };
+
+  const handleFieldEdit = async (account: AnyAccount, field: string, value: string) => {
+    const payload: Record<string, any> = {
+      tab: account._tab,
+      rowIndex: account._rowIndex
+    };
+
+    if (field === "CONTACT_NAME") {
+      payload.contactName = value;
+    } else if (field === "EMAIL") {
+      payload.email = value;
+    } else if (field === "PHONE") {
+      payload.phone = value;
+    }
+
+    await fetch("/api/sheets/update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    setEditingCell(null);
+    setEditValue("");
     await fetchAllTabs();
   };
 
@@ -357,6 +385,17 @@ export function PipelineTable({ data }: { data: AllTabsData }) {
                           account={account}
                           outreachLogs={outreachLogs}
                           onLogOutreach={() => setModalAccount(account)}
+                          editingCell={editingCell}
+                          editValue={editValue}
+                          onEditStart={(field, value) => {
+                            setEditingCell({ key: `${account._tabSlug}_${account._rowIndex}`, field });
+                            setEditValue(value);
+                          }}
+                          onEditSave={(field, value) => handleFieldEdit(account, field, value)}
+                          onEditCancel={() => {
+                            setEditingCell(null);
+                            setEditValue("");
+                          }}
                         />
                       </td>
                     </tr>
@@ -389,10 +428,20 @@ function ExpandedRow({
   account,
   outreachLogs,
   onLogOutreach,
+  editingCell,
+  editValue,
+  onEditStart,
+  onEditSave,
+  onEditCancel,
 }: {
   account: AnyAccount;
   outreachLogs: OutreachEntry[];
   onLogOutreach: () => void;
+  editingCell: { key: string; field: string } | null;
+  editValue: string;
+  onEditStart: (field: string, value: string) => void;
+  onEditSave: (field: string, value: string) => void;
+  onEditCancel: () => void;
 }) {
   const hasLocation = "location" in account && account.location;
   const hasIg = "ig" in account && account.ig;
@@ -408,24 +457,94 @@ function ExpandedRow({
         <div className="text-[10px] uppercase tracking-[0.3em] text-gray-600 font-semibold">Account Info</div>
 
         <div className="space-y-1.5">
-          {account.contactName && (
+          {account.contactName || editingCell?.field === "CONTACT_NAME" ? (
             <div className="flex gap-2">
               <span className="text-gray-600 w-20 shrink-0">Contact</span>
-              <span className="text-gray-200">{account.contactName}</span>
+              {editingCell?.field === "CONTACT_NAME" ? (
+                <input
+                  type="text"
+                  value={editValue}
+                  onChange={(e) => setEditValue(e.target.value)}
+                  onBlur={() => onEditSave("CONTACT_NAME", editValue)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") onEditSave("CONTACT_NAME", editValue);
+                    if (e.key === "Escape") onEditCancel();
+                  }}
+                  className="bg-rs-surface border border-rs-gold/50 rounded px-1.5 py-0.5 text-gray-200 focus:border-rs-gold focus:outline-none flex-1 text-xs"
+                  autoFocus
+                />
+              ) : (
+                <span
+                  onClick={() => onEditStart("CONTACT_NAME", account.contactName || "")}
+                  className="text-gray-200 cursor-pointer hover:text-rs-gold transition-colors"
+                >
+                  {account.contactName || "—"}
+                </span>
+              )}
             </div>
-          )}
-          {account.email && (
+          ) : null}
+          {account.email || editingCell?.field === "EMAIL" ? (
             <div className="flex gap-2">
               <span className="text-gray-600 w-20 shrink-0">Email</span>
-              <a href={`mailto:${account.email}`} className="text-rs-gold hover:underline truncate">{account.email}</a>
+              {editingCell?.field === "EMAIL" ? (
+                <input
+                  type="email"
+                  value={editValue}
+                  onChange={(e) => setEditValue(e.target.value)}
+                  onBlur={() => onEditSave("EMAIL", editValue)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") onEditSave("EMAIL", editValue);
+                    if (e.key === "Escape") onEditCancel();
+                  }}
+                  className="bg-rs-surface border border-rs-gold/50 rounded px-1.5 py-0.5 text-gray-200 focus:border-rs-gold focus:outline-none flex-1 text-xs"
+                  autoFocus
+                />
+              ) : (
+                <a
+                  href={`mailto:${account.email}`}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    onEditStart("EMAIL", account.email || "");
+                  }}
+                  className="text-rs-gold hover:underline truncate cursor-pointer"
+                  title="Click to edit"
+                >
+                  {account.email || "—"}
+                </a>
+              )}
             </div>
-          )}
-          {account.phone && (
+          ) : null}
+          {account.phone || editingCell?.field === "PHONE" ? (
             <div className="flex gap-2">
               <span className="text-gray-600 w-20 shrink-0">Phone</span>
-              <a href={`tel:${account.phone}`} className="text-gray-300 hover:text-rs-gold">{formatPhone(account.phone)}</a>
+              {editingCell?.field === "PHONE" ? (
+                <input
+                  type="tel"
+                  value={editValue}
+                  onChange={(e) => setEditValue(e.target.value)}
+                  onBlur={() => onEditSave("PHONE", editValue)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") onEditSave("PHONE", editValue);
+                    if (e.key === "Escape") onEditCancel();
+                  }}
+                  className="bg-rs-surface border border-rs-gold/50 rounded px-1.5 py-0.5 text-gray-200 focus:border-rs-gold focus:outline-none flex-1 text-xs"
+                  autoFocus
+                />
+              ) : (
+                <a
+                  href={`tel:${account.phone}`}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    onEditStart("PHONE", account.phone || "");
+                  }}
+                  className="text-gray-300 hover:text-rs-gold cursor-pointer transition-colors"
+                  title="Click to edit"
+                >
+                  {account.phone ? formatPhone(account.phone) : "—"}
+                </a>
+              )}
             </div>
-          )}
+          ) : null}
           {hasLocation && (
             <div className="flex gap-2">
               <span className="text-gray-600 w-20 shrink-0">Location</span>
