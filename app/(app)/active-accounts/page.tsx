@@ -28,11 +28,7 @@ export default function ActiveAccountsPage() {
 
   useEffect(() => {
     if (data?.activeAccounts) {
-      setAccounts(
-        data.activeAccounts.filter((account) =>
-          account.account.toLowerCase().includes("leever")
-        )
-      );
+      setAccounts(data.activeAccounts);
     }
   }, [data]);
 

@@ -68,7 +68,7 @@ export default function DashboardPage() {
   const contactActivityMap = useMemo<Record<string, ActivityLog>>(() => {
     const map: Record<string, ActivityLog> = {};
     for (const log of mergedLogs) {
-      if (!map[log.account_id] && getLatestContactLog([log])) {
+      if (!map[log.account_id] && countsAsContact(log)) {
         map[log.account_id] = log;
       }
     }
