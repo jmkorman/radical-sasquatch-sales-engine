@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { deleteActivityLog, getActivityLogs, insertActivityLog, updateActivityLog } from "@/lib/supabase/queries";
+import { deleteActivityLog, getActivityLogs, getDeletedActivityLogs, insertActivityLog, updateActivityLog } from "@/lib/supabase/queries";
 
 export async function GET(request: NextRequest) {
   if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
@@ -7,7 +7,8 @@ export async function GET(request: NextRequest) {
   }
   try {
     const accountId = request.nextUrl.searchParams.get("accountId") ?? undefined;
-    const logs = await getActivityLogs(accountId);
+    const trash = request.nextUrl.searchParams.get("trash") === "true";
+    const logs = trash ? await getDeletedActivityLogs(accountId) : await getActivityLogs(accountId);
     return NextResponse.json(logs);
   } catch (error) {
     console.error("Activity GET error:", error);
@@ -43,6 +44,7 @@ export async function PATCH(request: NextRequest) {
       note: body.note,
       status_before: body.status_before,
       status_after: body.status_after,
+      ...(body.is_deleted !== undefined ? { is_deleted: body.is_deleted } : {}),
     });
     return NextResponse.json(log);
   } catch (error) {

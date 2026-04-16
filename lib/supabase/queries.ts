@@ -35,6 +35,24 @@ export async function getActivityLogs(accountId?: string): Promise<ActivityLog[]
   let query = supabase
     .from("activity_logs")
     .select("*")
+    .eq("is_deleted", false)
+    .order("created_at", { ascending: false });
+
+  if (accountId) {
+    query = query.eq("account_id", accountId);
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data ?? []) as ActivityLog[];
+}
+
+export async function getDeletedActivityLogs(accountId?: string): Promise<ActivityLog[]> {
+  const supabase = createServerClient();
+  let query = supabase
+    .from("activity_logs")
+    .select("*")
+    .eq("is_deleted", true)
     .order("created_at", { ascending: false });
 
   if (accountId) {
@@ -48,7 +66,7 @@ export async function getActivityLogs(accountId?: string): Promise<ActivityLog[]
 
 export async function updateActivityLog(
   id: string,
-  updates: Partial<Pick<ActivityLog, "follow_up_date" | "note" | "status_before" | "status_after">>
+  updates: Partial<Pick<ActivityLog, "follow_up_date" | "note" | "status_before" | "status_after" | "is_deleted">>
 ) {
   const supabase = createServerClient();
   const { data, error } = await supabase
@@ -64,7 +82,19 @@ export async function updateActivityLog(
 
 export async function deleteActivityLog(id: string) {
   const supabase = createServerClient();
-  const { error } = await supabase.from("activity_logs").delete().eq("id", id);
+  const { error } = await supabase
+    .from("activity_logs")
+    .update({ is_deleted: true })
+    .eq("id", id);
+  if (error) throw error;
+}
+
+export async function restoreActivityLog(id: string) {
+  const supabase = createServerClient();
+  const { error } = await supabase
+    .from("activity_logs")
+    .update({ is_deleted: false })
+    .eq("id", id);
   if (error) throw error;
 }
 
@@ -73,6 +103,7 @@ export async function getLatestActivityByAccount(): Promise<Record<string, Activ
   const { data, error } = await supabase
     .from("activity_logs")
     .select("*")
+    .eq("is_deleted", false)
     .order("created_at", { ascending: false });
 
   if (error) throw error;

@@ -10,6 +10,7 @@ import { ActivityLogList } from "@/components/features/accounts/ActivityLog";
 import { parseActivityNote } from "@/lib/activity/notes";
 import { Button } from "@/components/ui/Button";
 import { useTrashStore } from "@/stores/useTrashStore";
+// deletedLogs from localStorage used only for the unloaded badge count
 import { useOutreachStore } from "@/stores/useOutreachStore";
 import { mergeActivityLogs, outreachEntriesToActivityLogs } from "@/lib/activity/local";
 
@@ -30,12 +31,14 @@ function formatTabLabel(tab: string) {
 
 export function AllLogsView() {
   const [logs, setLogs] = useState<ActivityLog[]>([]);
+  const [trashLogs, setTrashLogs] = useState<ActivityLog[]>([]);
   const [loading, setLoading] = useState(true);
+  const [trashLoading, setTrashLoading] = useState(false);
   const [query, setQuery] = useState("");
   const [actionFilter, setActionFilter] = useState("all");
   const [tabFilter, setTabFilter] = useState("all");
   const [showTrash, setShowTrash] = useState(false);
-  const { deletedLogs, clearLogTrash } = useTrashStore();
+  const deletedLogs = useTrashStore((state) => state.deletedLogs);
   const outreachEntries = useOutreachStore((state) => state.entries);
   const mergedLogs = useMemo(
     () => mergeActivityLogs(logs, outreachEntriesToActivityLogs(outreachEntries)),
@@ -55,9 +58,27 @@ export function AllLogsView() {
     }
   }
 
+  async function loadTrashLogs() {
+    setTrashLoading(true);
+    try {
+      const res = await fetch("/api/activity?trash=true", { cache: "no-store" });
+      if (!res.ok) throw new Error("Failed to load trash logs");
+      const data: ActivityLog[] = await res.json();
+      setTrashLogs(data);
+    } catch {
+      setTrashLogs([]);
+    } finally {
+      setTrashLoading(false);
+    }
+  }
+
   useEffect(() => {
     void loadLogs();
   }, []);
+
+  useEffect(() => {
+    if (showTrash) void loadTrashLogs();
+  }, [showTrash]);
 
   const tabOptions = useMemo(() => {
     const uniqueTabs = Array.from(new Set(mergedLogs.map((log) => log.tab))).sort();
@@ -72,7 +93,7 @@ export function AllLogsView() {
 
   const filteredLogs = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
-    const sourceLogs = showTrash ? deletedLogs.map((entry) => entry.log) : mergedLogs;
+    const sourceLogs = showTrash ? trashLogs : mergedLogs;
 
     return sourceLogs.filter((log) => {
       if (actionFilter !== "all" && log.action_type !== actionFilter) return false;
@@ -94,7 +115,7 @@ export function AllLogsView() {
 
       return haystack.includes(normalizedQuery);
     });
-  }, [actionFilter, deletedLogs, mergedLogs, query, showTrash, tabFilter]);
+  }, [actionFilter, mergedLogs, query, showTrash, tabFilter, trashLogs]);
 
   const followUpsScheduled = mergedLogs.filter((log) => Boolean(log.follow_up_date)).length;
   const touchesThisWeek = mergedLogs.filter((log) => {
@@ -129,13 +150,8 @@ export function AllLogsView() {
           size="sm"
           onClick={() => setShowTrash(true)}
         >
-          Log Trash ({deletedLogs.length})
+          Log Trash {showTrash ? `(${trashLogs.length})` : deletedLogs.length > 0 ? `(${deletedLogs.length})` : ""}
         </Button>
-        {showTrash && deletedLogs.length > 0 && (
-          <Button variant="ghost" size="sm" onClick={clearLogTrash}>
-            Empty Log Trash
-          </Button>
-        )}
       </div>
 
       <div className="grid gap-3 sm:grid-cols-3">
@@ -172,7 +188,7 @@ export function AllLogsView() {
           />
         </div>
 
-        {loading ? (
+        {loading || (showTrash && trashLoading) ? (
           <div className="flex items-center justify-center py-12">
             <Spinner />
           </div>
@@ -181,7 +197,11 @@ export function AllLogsView() {
             No logs match those filters yet.
           </div>
         ) : (
-          <ActivityLogList logs={filteredLogs} showDeleted={showTrash} onServerLogsChanged={loadLogs} />
+          <ActivityLogList
+            logs={filteredLogs}
+            showDeleted={showTrash}
+            onServerLogsChanged={showTrash ? loadTrashLogs : loadLogs}
+          />
         )}
       </Card>
     </div>

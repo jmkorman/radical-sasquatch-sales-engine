@@ -18,6 +18,7 @@ export interface ActivityLog {
   created_at: string;
   activity_kind?: ActivityKind;
   counts_as_contact?: boolean;
+  is_deleted?: boolean;
 }
 
 export interface OutreachFormData {

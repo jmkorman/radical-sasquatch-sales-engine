@@ -51,24 +51,9 @@ export function ActivityLogList({
         restoreEntry(activityLogToOutreachEntry(log));
       } else {
         const response = await fetch("/api/activity", {
-          method: "POST",
+          method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            account_id: log.account_id,
-            tab: log.tab,
-            row_index: log.row_index,
-            account_name: log.account_name,
-            action_type: log.action_type,
-            note: log.note,
-            status_before: log.status_before,
-            status_after: log.status_after,
-            follow_up_date: log.follow_up_date,
-            notion_task_id: log.notion_task_id,
-            source: log.source,
-            activity_kind: log.activity_kind,
-            counts_as_contact: log.counts_as_contact,
-            created_at: log.created_at,
-          }),
+          body: JSON.stringify({ id: log.id, is_deleted: false }),
         });
 
         if (!response.ok) {
@@ -80,8 +65,6 @@ export function ActivityLogList({
 
       restoreLogFromTrash(log.id);
       showActionFeedback("Timeline entry restored.", "success");
-    } catch {
-      showActionFeedback("Couldn’t restore that timeline entry.", "error");
     } finally {
       setBusyId(null);
     }
