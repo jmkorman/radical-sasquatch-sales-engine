@@ -5,6 +5,7 @@ import { AnyAccount, AllTabsData } from "@/types/accounts";
 import { ActivityLog } from "@/types/activity";
 import { Card } from "@/components/ui/Card";
 import { parseDateFromText, formatDate, daysSince } from "@/lib/utils/dates";
+import { getAllAccounts, getLatestContactLogForAccount, getResolvedFollowUpDate } from "@/lib/activity/timeline";
 
 interface FollowUpItem {
   account: AnyAccount;
@@ -13,37 +14,18 @@ interface FollowUpItem {
   followUpDate: string;
 }
 
-function getAllAccounts(data: AllTabsData): AnyAccount[] {
-  return [
-    ...data.restaurants,
-    ...data.retail,
-    ...data.catering,
-    ...data.foodTruck,
-    ...data.activeAccounts,
-  ];
-}
-
-function parseFollowUpSource(account: AnyAccount, latestLog?: ActivityLog): Date | null {
-  if (latestLog?.follow_up_date) {
-    return new Date(latestLog.follow_up_date);
-  }
-
-  const fromText = parseDateFromText(account.nextSteps || "");
-  return fromText;
-}
-
 export function buildFollowUpQueue(
   data: AllTabsData,
-  activityMap: Record<string, ActivityLog>
+  logs: ActivityLog[]
 ): FollowUpItem[] {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
   return getAllAccounts(data)
     .map((account) => {
-      const accountId = `${account._tabSlug}_${account._rowIndex}`;
-      const latestLog = activityMap[accountId];
-      const followUpDate = parseFollowUpSource(account, latestLog);
+      const latestLog = getLatestContactLogForAccount(logs, account);
+      const followUpRaw = getResolvedFollowUpDate(account, logs);
+      const followUpDate = followUpRaw ? new Date(followUpRaw) : null;
 
       if (!followUpDate || isNaN(followUpDate.getTime())) return null;
 

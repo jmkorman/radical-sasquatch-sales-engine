@@ -1,18 +1,22 @@
 "use client";
 
-import { useState, useMemo, Fragment } from "react";
+import { useState, useMemo, Fragment, useEffect } from "react";
 import { AnyAccount, AllTabsData, TabName } from "@/types/accounts";
+import { ActivityLog } from "@/types/activity";
 import { Tabs } from "@/components/ui/Tabs";
 import { SearchBar } from "@/components/ui/SearchBar";
 import { Badge } from "@/components/ui/Badge";
 import { STATUS_VALUES, TAB_NAMES } from "@/lib/utils/constants";
 import { formatPhone } from "@/lib/utils/phone";
 import { useSheetStore } from "@/stores/useSheetStore";
-import { useOutreachStore, OutreachEntry } from "@/stores/useOutreachStore";
+import { useOutreachStore } from "@/stores/useOutreachStore";
 import { LogOutreachModal } from "@/components/features/dashboard/LogOutreachModal";
 import { todayISO, daysSince, dateToTimestamp, parseAppDate, getContactAgeClass } from "@/lib/utils/dates";
 import { parseActivityNote } from "@/lib/activity/notes";
-import { getPhoneColumnIndex, getEmailColumnIndex, getContactNameColumnIndex } from "@/lib/sheets/schema";
+import { getLatestActivityLogForAccount, getLatestContactLogForAccount, getLogsForAccount } from "@/lib/activity/timeline";
+import { mergeActivityLogs, outreachEntriesToActivityLogs } from "@/lib/activity/local";
+import { persistActivityEntry } from "@/lib/activity/persist";
+import { useUIStore } from "@/stores/useUIStore";
 import Link from "next/link";
 
 const STATUS_SORT_ORDER: Record<string, number> = {
@@ -40,6 +44,8 @@ function getAccountsForTab(data: AllTabsData, tab: TabName): AnyAccount[] {
     case "Catering": return data.catering;
     case "Food Truck": return data.foodTruck;
   }
+
+  return [];
 }
 
 function formatContactDate(dateStr: string): { label: string; daysAgo: number | null } {
@@ -64,8 +70,29 @@ export function PipelineTable({ data }: { data: AllTabsData }) {
   const [modalAccount, setModalAccount] = useState<AnyAccount | null>(null);
   const [editingCell, setEditingCell] = useState<{ key: string; field: string } | null>(null);
   const [editValue, setEditValue] = useState("");
+  const [serverLogs, setServerLogs] = useState<ActivityLog[]>([]);
   const { fetchAllTabs } = useSheetStore();
   const outreachStore = useOutreachStore();
+  const showActionFeedback = useUIStore((state) => state.showActionFeedback);
+
+  useEffect(() => {
+    async function loadActivity() {
+      try {
+        const response = await fetch("/api/activity", { cache: "no-store" });
+        if (!response.ok) throw new Error("Failed to load activity");
+        setServerLogs(await response.json());
+      } catch {
+        setServerLogs([]);
+      }
+    }
+
+    void loadActivity();
+  }, []);
+
+  const mergedLogs = useMemo(
+    () => mergeActivityLogs(outreachEntriesToActivityLogs(outreachStore.entries), serverLogs),
+    [outreachStore.entries, serverLogs]
+  );
 
   const allForTab = useMemo(() => getAccountsForTab(data, activeTab), [data, activeTab]);
 
@@ -86,17 +113,20 @@ export function PipelineTable({ data }: { data: AllTabsData }) {
     }
 
     return [...list].sort((a, b) => {
+      const aLastTouch = getLatestContactLogForAccount(mergedLogs, a)?.created_at || a.contactDate;
+      const bLastTouch = getLatestContactLogForAccount(mergedLogs, b)?.created_at || b.contactDate;
+
       if (sortBy === "name") return a.account.localeCompare(b.account);
 
       if (sortBy === "stale") {
-        const aT = dateToTimestamp(a.contactDate);
-        const bT = dateToTimestamp(b.contactDate);
+        const aT = dateToTimestamp(aLastTouch);
+        const bT = dateToTimestamp(bLastTouch);
         return aT - bT; // oldest first = most stale
       }
 
       if (sortBy === "recent") {
-        const aT = dateToTimestamp(a.contactDate);
-        const bT = dateToTimestamp(b.contactDate);
+        const aT = dateToTimestamp(aLastTouch);
+        const bT = dateToTimestamp(bLastTouch);
         return bT - aT;
       }
 
@@ -104,11 +134,11 @@ export function PipelineTable({ data }: { data: AllTabsData }) {
       const aOrder = STATUS_SORT_ORDER[a.status] ?? 5;
       const bOrder = STATUS_SORT_ORDER[b.status] ?? 5;
       if (aOrder !== bOrder) return aOrder - bOrder;
-      const aT = dateToTimestamp(a.contactDate);
-      const bT = dateToTimestamp(b.contactDate);
+      const aT = dateToTimestamp(aLastTouch);
+      const bT = dateToTimestamp(bLastTouch);
       return aT - bT;
     });
-  }, [allForTab, search, statusFilter, sortBy]);
+  }, [allForTab, mergedLogs, search, statusFilter, sortBy]);
 
   const statusCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -120,79 +150,95 @@ export function PipelineTable({ data }: { data: AllTabsData }) {
   }, [allForTab]);
 
   const handleStatusChange = async (account: AnyAccount, newStatus: string) => {
-    await fetch("/api/sheets/update", {
+    const response = await fetch("/api/sheets/update", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tab: account._tab, rowIndex: account._rowIndex, newStatus }),
+      body: JSON.stringify({
+        tab: account._tab,
+        rowIndex: account._rowIndex,
+        newStatus,
+        expectedValues: {
+          newStatus: account.status || "",
+        },
+      }),
     });
+    if (response.status === 409) {
+      await fetchAllTabs();
+      showActionFeedback("That pipeline row changed before the status update saved. I refreshed the latest data.", "error");
+      return;
+    }
+    if (!response.ok) {
+      showActionFeedback("Couldn’t update the pipeline status.", "error");
+      return;
+    }
     await fetchAllTabs();
+    showActionFeedback("Pipeline status updated.", "success");
   };
 
   const handleFieldEdit = async (account: AnyAccount, field: string, value: string) => {
     const payload: Record<string, any> = {
       tab: account._tab,
-      rowIndex: account._rowIndex
+      rowIndex: account._rowIndex,
+      expectedValues: {},
     };
 
     if (field === "CONTACT_NAME") {
       payload.contactName = value;
+      payload.expectedValues.contactName = account.contactName || "";
     } else if (field === "EMAIL") {
       payload.email = value;
+      payload.expectedValues.email = account.email || "";
     } else if (field === "PHONE") {
       payload.phone = value;
+      payload.expectedValues.phone = account.phone || "";
     }
 
-    await fetch("/api/sheets/update", {
+    const response = await fetch("/api/sheets/update", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
 
+    if (response.status === 409) {
+      setEditingCell(null);
+      setEditValue("");
+      await fetchAllTabs();
+      showActionFeedback("That field changed before your edit saved. I refreshed the latest row.", "error");
+      return;
+    }
+
+    if (!response.ok) {
+      showActionFeedback("Couldn’t save that pipeline field.", "error");
+      return;
+    }
+
     setEditingCell(null);
     setEditValue("");
     await fetchAllTabs();
+    showActionFeedback("Pipeline field updated.", "success");
   };
 
   const handleSubmitOutreach = async (outreachData: {
     actionType: string; statusAfter: string; note: string; followUpDate: string;
   }) => {
     if (!modalAccount) return;
-    const accountId = `${modalAccount._tabSlug}_${modalAccount._rowIndex}`;
-
-    outreachStore.addEntry({
-      account_id: accountId,
-      account_name: modalAccount.account,
-      tab: modalAccount._tabSlug,
-      action_type: outreachData.actionType,
+    const { log, persistedRemotely } = await persistActivityEntry({
+      account: modalAccount,
+      actionType: outreachData.actionType,
       note: outreachData.note,
-      status_before: modalAccount.status,
-      status_after: outreachData.statusAfter,
-      follow_up_date: outreachData.followUpDate || null,
+      followUpDate: outreachData.followUpDate || null,
+      statusBefore: modalAccount.status,
+      statusAfter: outreachData.statusAfter,
       source: "manual",
-      activity_kind: "outreach",
-      counts_as_contact: true,
+      activityKind: "outreach",
+      countsAsContact: true,
     });
 
-    fetch("/api/activity", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        account_id: accountId,
-        tab: modalAccount._tabSlug,
-        row_index: modalAccount._rowIndex,
-        account_name: modalAccount.account,
-        action_type: outreachData.actionType,
-        note: outreachData.note,
-        status_before: modalAccount.status,
-        status_after: outreachData.statusAfter,
-        follow_up_date: outreachData.followUpDate || null,
-        source: "manual",
-        activity_kind: "outreach",
-        counts_as_contact: true,
-      }),
-    }).catch(() => {});
+    if (persistedRemotely) {
+      setServerLogs((existing) => mergeActivityLogs([log], existing));
+    }
 
-    await fetch("/api/sheets/update", {
+    const response = await fetch("/api/sheets/update", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -201,11 +247,31 @@ export function PipelineTable({ data }: { data: AllTabsData }) {
         newStatus: outreachData.statusAfter,
         contactDate: todayISO(),
         nextSteps: outreachData.note,
+        expectedValues: {
+          newStatus: modalAccount.status || "",
+          nextSteps: modalAccount.nextSteps || "",
+        },
       }),
     });
 
+    if (response.status === 409) {
+      await fetchAllTabs();
+      showActionFeedback("That account changed before this outreach saved to the sheet. I refreshed the latest data.", "error");
+      return;
+    }
+
+    if (!response.ok) {
+      showActionFeedback(
+        persistedRemotely
+          ? "Outreach saved, but the pipeline row failed to update."
+          : "Outreach saved locally, but the pipeline row failed to update.",
+        "error"
+      );
+      return;
+    }
+
     if (outreachData.followUpDate) {
-      fetch("/api/notion/tasks", {
+      void fetch("/api/notion/tasks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -218,6 +284,13 @@ export function PipelineTable({ data }: { data: AllTabsData }) {
     }
 
     await fetchAllTabs();
+    setModalAccount(null);
+    showActionFeedback(
+      persistedRemotely
+        ? "Pipeline outreach logged."
+        : "Pipeline outreach saved locally. Cloud sync can retry later.",
+      persistedRemotely ? "success" : "info"
+    );
   };
 
   return (
@@ -305,8 +378,11 @@ export function PipelineTable({ data }: { data: AllTabsData }) {
             {accounts.map((account) => {
               const key = `${account._tabSlug}_${account._rowIndex}`;
               const isExpanded = expanded === key;
-              const outreachLogs = outreachStore.getEntriesForAccount(key);
-              const { label: contactLabel, daysAgo } = formatContactDate(account.contactDate);
+              const accountLogs = getLogsForAccount(mergedLogs, account);
+              const outreachLogs = accountLogs.filter((entry) => entry.activity_kind !== "note");
+              const latestLog = getLatestActivityLogForAccount(mergedLogs, account);
+              const lastTouch = getLatestContactLogForAccount(mergedLogs, account)?.created_at || account.contactDate;
+              const { label: contactLabel, daysAgo } = formatContactDate(lastTouch);
 
               return (
                 <Fragment key={key}>
@@ -352,7 +428,7 @@ export function PipelineTable({ data }: { data: AllTabsData }) {
                       </select>
                     </td>
 
-                    <td className={`px-4 py-3 hidden sm:table-cell ${getContactAgeClass(account.contactDate)}`}>
+                    <td className={`px-4 py-3 hidden sm:table-cell ${getContactAgeClass(lastTouch)}`}>
                       <span className={
                         daysAgo !== null && daysAgo > 14 ? "font-medium" :
                         daysAgo === 0 ? "text-rs-gold" :
@@ -363,9 +439,9 @@ export function PipelineTable({ data }: { data: AllTabsData }) {
                     </td>
 
                     <td className="px-4 py-3 hidden md:table-cell" onClick={e => e.stopPropagation()}>
-                      {outreachLogs.length > 0 ? (
+                      {latestLog?.note ? (
                         <div className="text-gray-400 text-xs leading-relaxed line-clamp-2">
-                          {outreachLogs[outreachLogs.length - 1].note}
+                          {latestLog.note}
                         </div>
                       ) : account.nextSteps ? (
                         <div className="text-gray-400 text-xs leading-relaxed line-clamp-2">
@@ -437,7 +513,7 @@ function ExpandedRow({
   onEditCancel,
 }: {
   account: AnyAccount;
-  outreachLogs: OutreachEntry[];
+  outreachLogs: ActivityLog[];
   onLogOutreach: () => void;
   editingCell: { key: string; field: string } | null;
   editValue: string;

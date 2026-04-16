@@ -20,6 +20,11 @@ function cell(row: string[], index: number): string {
   return row[index] ?? "";
 }
 
+function shouldIncludeAccount(name: string): boolean {
+  const normalized = name.trim().toLowerCase();
+  return normalized !== "" && normalized !== "targets" && normalized !== "total" && normalized !== "totals";
+}
+
 function toStatus(val: string): StatusValue {
   const valid = ["Identified", "Researched", "Contacted", "Following Up", "Closed - Won"];
   return valid.includes(val) ? (val as StatusValue) : "";
@@ -154,10 +159,7 @@ export async function getRestaurants(): Promise<RestaurantAccount[]> {
   return rows
     .slice(1)
     .map((row, i) => mapRestaurant(row, i + 2))
-    .filter((a) => {
-      const name = a.account.trim().toLowerCase();
-      return name !== "" && name !== "targets";
-    });
+    .filter((a) => shouldIncludeAccount(a.account));
 }
 
 export async function getRetail(): Promise<RetailAccount[]> {
@@ -166,10 +168,7 @@ export async function getRetail(): Promise<RetailAccount[]> {
   return rows
     .slice(1)
     .map((row, i) => mapRetail(row, i + 2))
-    .filter((a) => {
-      const name = a.account.trim().toLowerCase();
-      return name !== "" && name !== "targets";
-    });
+    .filter((a) => shouldIncludeAccount(a.account));
 }
 
 export async function getCatering(): Promise<CateringAccount[]> {
@@ -178,10 +177,7 @@ export async function getCatering(): Promise<CateringAccount[]> {
   return rows
     .slice(1)
     .map((row, i) => mapCatering(row, i + 2))
-    .filter((a) => {
-      const name = a.account.trim().toLowerCase();
-      return name !== "" && name !== "targets";
-    });
+    .filter((a) => shouldIncludeAccount(a.account));
 }
 
 export async function getFoodTruck(): Promise<FoodTruckAccount[]> {
@@ -190,10 +186,7 @@ export async function getFoodTruck(): Promise<FoodTruckAccount[]> {
   return rows
     .slice(1)
     .map((row, i) => mapFoodTruck(row, i + 2))
-    .filter((a) => {
-      const name = a.account.trim().toLowerCase();
-      return name !== "" && name !== "targets";
-    });
+    .filter((a) => shouldIncludeAccount(a.account));
 }
 
 export async function getActiveAccounts(): Promise<ActiveAccount[]> {
@@ -202,10 +195,7 @@ export async function getActiveAccounts(): Promise<ActiveAccount[]> {
   return rows
     .slice(1)
     .map((row, i) => mapActiveAccount(row, i + 2))
-    .filter((a) => {
-      const name = a.account.trim().toLowerCase();
-      return name !== "" && name !== "targets";
-    });
+    .filter((a) => shouldIncludeAccount(a.account));
 }
 
 export async function getAllTabs(): Promise<AllTabsData> {

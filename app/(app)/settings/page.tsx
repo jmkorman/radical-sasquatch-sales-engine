@@ -26,16 +26,6 @@ export default function SettingsPage() {
       </Card>
 
       <Card>
-        <h3 className="text-lg font-semibold text-white mb-3">Gmail Integration</h3>
-        <p className="text-sm text-gray-400 mb-3">
-          Connect your Google account to send emails and view threads from the app.
-        </p>
-        <Button variant="secondary" disabled>
-          Connect Gmail (configure OAuth credentials first)
-        </Button>
-      </Card>
-
-      <Card>
         <h3 className="text-lg font-semibold text-white mb-3">Notion Integration</h3>
         <p className="text-sm text-gray-400 mb-3">
           Follow-up tasks are automatically created in your Notion database when you set a follow-up date.

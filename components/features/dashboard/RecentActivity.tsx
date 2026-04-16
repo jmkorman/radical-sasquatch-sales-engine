@@ -1,6 +1,6 @@
 "use client";
 
-import { OutreachEntry } from "@/stores/useOutreachStore";
+import { ActivityLog } from "@/types/activity";
 import { parseActivityNote } from "@/lib/activity/notes";
 
 const ACTION_ICONS: Record<string, string> = {
@@ -21,7 +21,7 @@ function timeAgo(isoString: string): string {
   return `${days}d ago`;
 }
 
-export function RecentActivity({ entries }: { entries: OutreachEntry[] }) {
+export function RecentActivity({ entries }: { entries: ActivityLog[] }) {
   if (entries.length === 0) return null;
 
   const recent = entries.slice(0, 8);

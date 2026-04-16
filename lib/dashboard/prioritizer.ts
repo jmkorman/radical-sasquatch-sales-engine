@@ -1,6 +1,7 @@
 import { AnyAccount, AllTabsData } from "@/types/accounts";
 import { ActivityLog } from "@/types/activity";
 import { daysSince, parseDateFromText } from "@/lib/utils/dates";
+import { getAllAccounts, getLatestContactLogForAccount } from "@/lib/activity/timeline";
 
 export interface HitListItem {
   account: AnyAccount;
@@ -12,15 +13,9 @@ export interface HitListItem {
 
 export function buildHitList(
   data: AllTabsData,
-  activityMap: Record<string, ActivityLog>
+  logs: ActivityLog[]
 ): HitListItem[] {
-  const allAccounts: AnyAccount[] = [
-    ...data.restaurants,
-    ...data.retail,
-    ...data.catering,
-    ...data.foodTruck,
-    ...data.activeAccounts,
-  ];
+  const allAccounts: AnyAccount[] = getAllAccounts(data);
 
   const items: HitListItem[] = [];
 
@@ -29,8 +24,7 @@ export function buildHitList(
     if (account.status === "Closed - Won" || account.status === "") continue;
     if (!account.account) continue;
 
-    const accountId = `${account._tabSlug}_${account._rowIndex}`;
-    const lastActivity = activityMap[accountId] ?? null;
+    const lastActivity = getLatestContactLogForAccount(logs, account);
 
     // Determine days since last touch
     let lastTouchDate = lastActivity?.created_at ?? "";

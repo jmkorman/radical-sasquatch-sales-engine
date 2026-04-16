@@ -10,6 +10,8 @@ import { ActivityLogList } from "@/components/features/accounts/ActivityLog";
 import { parseActivityNote } from "@/lib/activity/notes";
 import { Button } from "@/components/ui/Button";
 import { useTrashStore } from "@/stores/useTrashStore";
+import { useOutreachStore } from "@/stores/useOutreachStore";
+import { mergeActivityLogs, outreachEntriesToActivityLogs } from "@/lib/activity/local";
 
 const ACTION_OPTIONS = [
   { value: "all", label: "All actions" },
@@ -34,26 +36,31 @@ export function AllLogsView() {
   const [tabFilter, setTabFilter] = useState("all");
   const [showTrash, setShowTrash] = useState(false);
   const { deletedLogs, clearLogTrash } = useTrashStore();
+  const outreachEntries = useOutreachStore((state) => state.entries);
+  const mergedLogs = useMemo(
+    () => mergeActivityLogs(logs, outreachEntriesToActivityLogs(outreachEntries)),
+    [logs, outreachEntries]
+  );
+
+  async function loadLogs() {
+    try {
+      const res = await fetch("/api/activity", { cache: "no-store" });
+      if (!res.ok) throw new Error("Failed to load activity logs");
+      const data: ActivityLog[] = await res.json();
+      setLogs(data);
+    } catch {
+      setLogs([]);
+    } finally {
+      setLoading(false);
+    }
+  }
 
   useEffect(() => {
-    async function loadLogs() {
-      try {
-        const res = await fetch("/api/activity");
-        if (!res.ok) throw new Error("Failed to load activity logs");
-        const data: ActivityLog[] = await res.json();
-        setLogs(data);
-      } catch {
-        setLogs([]);
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    loadLogs();
+    void loadLogs();
   }, []);
 
   const tabOptions = useMemo(() => {
-    const uniqueTabs = Array.from(new Set(logs.map((log) => log.tab))).sort();
+    const uniqueTabs = Array.from(new Set(mergedLogs.map((log) => log.tab))).sort();
     return [
       { value: "all", label: "All pipeline tabs" },
       ...uniqueTabs.map((tab) => ({
@@ -61,11 +68,11 @@ export function AllLogsView() {
         label: formatTabLabel(tab),
       })),
     ];
-  }, [logs]);
+  }, [mergedLogs]);
 
   const filteredLogs = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
-    const sourceLogs = showTrash ? deletedLogs.map((entry) => entry.log) : logs;
+    const sourceLogs = showTrash ? deletedLogs.map((entry) => entry.log) : mergedLogs;
 
     return sourceLogs.filter((log) => {
       if (actionFilter !== "all" && log.action_type !== actionFilter) return false;
@@ -87,10 +94,10 @@ export function AllLogsView() {
 
       return haystack.includes(normalizedQuery);
     });
-  }, [actionFilter, deletedLogs, logs, query, showTrash, tabFilter]);
+  }, [actionFilter, deletedLogs, mergedLogs, query, showTrash, tabFilter]);
 
-  const followUpsScheduled = logs.filter((log) => Boolean(log.follow_up_date)).length;
-  const touchesThisWeek = logs.filter((log) => {
+  const followUpsScheduled = mergedLogs.filter((log) => Boolean(log.follow_up_date)).length;
+  const touchesThisWeek = mergedLogs.filter((log) => {
     const created = new Date(log.created_at).getTime();
     return Number.isFinite(created) && Date.now() - created < 7 * 24 * 60 * 60 * 1000;
   }).length;
@@ -134,7 +141,7 @@ export function AllLogsView() {
       <div className="grid gap-3 sm:grid-cols-3">
         <Card>
           <div className="text-[11px] uppercase tracking-[0.3em] text-[#af9fe6]">Total Entries</div>
-          <div className="mt-2 text-3xl font-black text-rs-cream">{logs.length}</div>
+          <div className="mt-2 text-3xl font-black text-rs-cream">{mergedLogs.length}</div>
         </Card>
         <Card>
           <div className="text-[11px] uppercase tracking-[0.3em] text-[#af9fe6]">Touches This Week</div>
@@ -174,7 +181,7 @@ export function AllLogsView() {
             No logs match those filters yet.
           </div>
         ) : (
-          <ActivityLogList logs={filteredLogs} showDeleted={showTrash} />
+          <ActivityLogList logs={filteredLogs} showDeleted={showTrash} onServerLogsChanged={loadLogs} />
         )}
       </Card>
     </div>

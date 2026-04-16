@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { updateCell } from "@/lib/sheets/write";
+import { deleteRow, getCellValue, updateCell } from "@/lib/sheets/write";
 import {
   getAccountColumnIndex,
   getStatusColumnIndex,
@@ -14,6 +14,23 @@ import {
   getOrderColumnIndex,
 } from "@/lib/sheets/schema";
 import { formatDateForSheet } from "@/lib/utils/dates";
+
+function getFieldColumnIndex(tab: string, field: string): number {
+  switch (field) {
+    case "newStatus": return getStatusColumnIndex(tab);
+    case "contactDate": return getContactDateColumnIndex(tab);
+    case "nextSteps": return getNextStepsColumnIndex(tab);
+    case "notes": return getNotesColumnIndex(tab);
+    case "contactName": return getContactNameColumnIndex(tab);
+    case "accountName": return getAccountColumnIndex(tab);
+    case "type": return getTypeColumnIndex(tab);
+    case "location": return getLocationColumnIndex(tab);
+    case "phone": return getPhoneColumnIndex(tab);
+    case "email": return getEmailColumnIndex(tab);
+    case "order": return getOrderColumnIndex(tab);
+    default: throw new Error(`Unknown expected field: ${field}`);
+  }
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -32,6 +49,8 @@ export async function POST(request: NextRequest) {
       phone,
       email,
       order,
+      deleteRow: shouldDeleteRow,
+      expectedValues,
     } = body;
 
     if (!tab || !rowIndex) {
@@ -39,6 +58,30 @@ export async function POST(request: NextRequest) {
         { error: "tab and rowIndex are required" },
         { status: 400 }
       );
+    }
+
+    if (expectedValues && typeof expectedValues === "object") {
+      const currentValues: Record<string, string> = {};
+
+      for (const [field, expectedValue] of Object.entries(expectedValues as Record<string, string>)) {
+        const columnIndex = getFieldColumnIndex(tab, field);
+        currentValues[field] = await getCellValue(tab, rowIndex, columnIndex);
+
+        if (currentValues[field] !== (expectedValue ?? "")) {
+          return NextResponse.json(
+            {
+              error: "Sheet row changed before this save completed",
+              currentValues,
+            },
+            { status: 409 }
+          );
+        }
+      }
+    }
+
+    if (shouldDeleteRow) {
+      await deleteRow(tab, rowIndex);
+      return NextResponse.json({ success: true });
     }
 
     // Update status if provided

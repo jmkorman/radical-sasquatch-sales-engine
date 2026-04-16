@@ -24,6 +24,22 @@ export async function updateCell(
   });
 }
 
+export async function getCellValue(
+  tabName: string,
+  rowIndex: number,
+  columnIndex: number
+): Promise<string> {
+  const sheets = getSheetsClient();
+  const colLetter = indexToColumnLetter(columnIndex);
+  const range = `'${tabName}'!${colLetter}${rowIndex}`;
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId: getSheetId(),
+    range,
+  });
+
+  return (response.data.values?.[0]?.[0] as string | undefined) ?? "";
+}
+
 /**
  * Update multiple cells in sequence for the same row.
  * Each cell is updated individually - never a bulk row overwrite.
@@ -36,4 +52,38 @@ export async function updateCells(
   for (const update of updates) {
     await updateCell(tabName, rowIndex, update.columnIndex, update.value);
   }
+}
+
+export async function deleteRow(tabName: string, rowIndex: number): Promise<void> {
+  const sheets = getSheetsClient();
+  const spreadsheetId = getSheetId();
+  const spreadsheet = await sheets.spreadsheets.get({
+    spreadsheetId,
+    fields: "sheets.properties",
+  });
+  const sheetId = spreadsheet.data.sheets?.find(
+    (sheet) => sheet.properties?.title === tabName
+  )?.properties?.sheetId;
+
+  if (typeof sheetId !== "number") {
+    throw new Error(`Unable to find sheet id for tab: ${tabName}`);
+  }
+
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      requests: [
+        {
+          deleteDimension: {
+            range: {
+              sheetId,
+              dimension: "ROWS",
+              startIndex: rowIndex - 1,
+              endIndex: rowIndex,
+            },
+          },
+        },
+      ],
+    },
+  });
 }

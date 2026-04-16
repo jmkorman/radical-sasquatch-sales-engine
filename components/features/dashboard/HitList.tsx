@@ -6,13 +6,14 @@ import { AccountCard } from "./AccountCard";
 import { LogOutreachModal } from "./LogOutreachModal";
 import { AnyAccount } from "@/types/accounts";
 import { useSheetStore } from "@/stores/useSheetStore";
-import { useOutreachStore } from "@/stores/useOutreachStore";
 import { todayISO } from "@/lib/utils/dates";
+import { useUIStore } from "@/stores/useUIStore";
+import { persistActivityEntry } from "@/lib/activity/persist";
 
 export function HitList({ items }: { items: HitListItem[] }) {
   const [modalAccount, setModalAccount] = useState<AnyAccount | null>(null);
   const { fetchAllTabs } = useSheetStore();
-  const outreachStore = useOutreachStore();
+  const showActionFeedback = useUIStore((state) => state.showActionFeedback);
 
   const handleSubmitOutreach = async (data: {
     actionType: string;
@@ -22,45 +23,19 @@ export function HitList({ items }: { items: HitListItem[] }) {
   }) => {
     if (!modalAccount) return;
 
-    const accountId = `${modalAccount._tabSlug}_${modalAccount._rowIndex}`;
-
-    // Save to localStorage immediately (no Supabase required)
-    outreachStore.addEntry({
-      account_id: accountId,
-      account_name: modalAccount.account,
-      tab: modalAccount._tabSlug,
-      action_type: data.actionType,
+    const { persistedRemotely } = await persistActivityEntry({
+      account: modalAccount,
+      actionType: data.actionType,
       note: data.note,
-      status_before: modalAccount.status,
-      status_after: data.statusAfter,
-      follow_up_date: data.followUpDate || null,
+      followUpDate: data.followUpDate || null,
+      statusBefore: modalAccount.status,
+      statusAfter: data.statusAfter,
       source: "manual",
-      activity_kind: "outreach",
-      counts_as_contact: true,
+      activityKind: "outreach",
+      countsAsContact: true,
     });
 
-    // Also try Supabase (non-blocking)
-    fetch("/api/activity", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        account_id: accountId,
-        tab: modalAccount._tabSlug,
-        row_index: modalAccount._rowIndex,
-        account_name: modalAccount.account,
-        action_type: data.actionType,
-        note: data.note,
-        status_before: modalAccount.status,
-        status_after: data.statusAfter,
-        follow_up_date: data.followUpDate || null,
-        source: "manual",
-        activity_kind: "outreach",
-        counts_as_contact: true,
-      }),
-    }).catch(() => {});
-
-    // Update sheet (status + contact date)
-    await fetch("/api/sheets/update", {
+    const response = await fetch("/api/sheets/update", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -69,8 +44,28 @@ export function HitList({ items }: { items: HitListItem[] }) {
         newStatus: data.statusAfter,
         contactDate: todayISO(),
         nextSteps: data.note,
+        expectedValues: {
+          newStatus: modalAccount.status || "",
+          nextSteps: modalAccount.nextSteps || "",
+        },
       }),
     });
+
+    if (response.status === 409) {
+      await fetchAllTabs();
+      showActionFeedback("The hit-list account changed before this save completed. I refreshed the latest sheet data.", "error");
+      return;
+    }
+
+    if (!response.ok) {
+      showActionFeedback(
+        persistedRemotely
+          ? "Outreach saved, but the sheet update failed."
+          : "Saved locally, but the sheet update failed.",
+        "error"
+      );
+      return;
+    }
 
     // Create Notion task if follow-up date set
     if (data.followUpDate) {
@@ -97,6 +92,13 @@ export function HitList({ items }: { items: HitListItem[] }) {
     }
 
     await fetchAllTabs();
+    showActionFeedback(
+      persistedRemotely
+        ? "Outreach logged from the hit list."
+        : "Outreach logged locally from the hit list. Cloud sync can retry later.",
+      persistedRemotely ? "success" : "info"
+    );
+    setModalAccount(null);
   };
 
   if (items.length === 0) {

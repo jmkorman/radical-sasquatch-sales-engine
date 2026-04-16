@@ -21,7 +21,7 @@ export default function AccountPage() {
   useEffect(() => {
     async function loadLogs() {
       try {
-        const res = await fetch(`/api/activity/${tab}_${id}`);
+        const res = await fetch("/api/activity", { cache: "no-store" });
         if (res.ok) setLogs(await res.json());
       } catch {}
       setLoading(false);

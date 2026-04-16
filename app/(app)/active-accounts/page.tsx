@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useSheetStore } from "@/stores/useSheetStore";
 import { useTrashStore, DeletedEntry } from "@/stores/useTrashStore";
 import { AnyAccount } from "@/types/accounts";
@@ -13,8 +14,13 @@ import { SearchBar } from "@/components/ui/SearchBar";
 import Link from "next/link";
 import { countsAsContact } from "@/lib/activity/helpers";
 import { getOrderStats } from "@/lib/orders/helpers";
+import { useOutreachStore } from "@/stores/useOutreachStore";
+import { mergeActivityLogs, outreachEntriesToActivityLogs } from "@/lib/activity/local";
+import { useUIStore } from "@/stores/useUIStore";
+import { getAccountHealth } from "@/lib/accounts/health";
 
-export default function ActiveAccountsPage() {
+function ActiveAccountsPageContent() {
+  const searchParams = useSearchParams();
   const [accounts, setAccounts] = useState<AnyAccount[]>([]);
   const [editingCell, setEditingCell] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
@@ -23,8 +29,25 @@ export default function ActiveAccountsPage() {
   const [sortBy, setSortBy] = useState<"recent" | "oldest" | "name" | "order">("recent");
   const [logs, setLogs] = useState<ActivityLog[]>([]);
   const [orders, setOrders] = useState<OrderRecord[]>([]);
-  const { data } = useSheetStore();
+  const [pendingDeleteIds, setPendingDeleteIds] = useState<string[]>([]);
+  const { data, fetchAllTabs } = useSheetStore();
   const { entries: trash, removeFromTrash, clearTrash } = useTrashStore();
+  const outreachEntries = useOutreachStore((state) => state.entries);
+  const showActionFeedback = useUIStore((state) => state.showActionFeedback);
+  const showActionFeedbackWithAction = useUIStore((state) => state.showActionFeedbackWithAction);
+  const deleteTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const mergedLogs = useMemo(
+    () => mergeActivityLogs(logs, outreachEntriesToActivityLogs(outreachEntries)),
+    [logs, outreachEntries]
+  );
+  const focus = searchParams.get("focus") ?? "";
+
+  useEffect(() => {
+    const requestedSort = searchParams.get("sort");
+    if (requestedSort === "recent" || requestedSort === "oldest" || requestedSort === "name" || requestedSort === "order") {
+      setSortBy(requestedSort);
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     if (data?.activeAccounts) {
@@ -36,8 +59,8 @@ export default function ActiveAccountsPage() {
     async function loadSupportingData() {
       try {
         const [activityResponse, ordersResponse] = await Promise.all([
-          fetch("/api/activity"),
-          fetch("/api/orders"),
+          fetch("/api/activity", { cache: "no-store" }),
+          fetch("/api/orders", { cache: "no-store" }),
         ]);
         if (activityResponse.ok) {
           setLogs(await activityResponse.json());
@@ -90,15 +113,25 @@ export default function ActiveAccountsPage() {
       [apiField]: value,
     };
 
-    await fetch("/api/sheets/update", {
+    const response = await fetch("/api/sheets/update", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         tab: "Active Accounts",
         rowIndex: account._rowIndex,
         ...updates,
+        expectedValues: {
+          [apiField]: currentValue,
+        },
       }),
     });
+
+    if (response.status === 409) {
+      await fetchAllTabs();
+      showActionFeedback("That row changed before your edit saved. I refreshed the latest sheet data.", "error");
+      setEditingCell(null);
+      return;
+    }
 
     setAccounts((existing) =>
       existing.map((item) => {
@@ -110,12 +143,64 @@ export default function ActiveAccountsPage() {
       })
     );
     setEditingCell(null);
+    showActionFeedback("Active account updated.", "success");
   };
 
-  const handleDelete = (account: AnyAccount) => {
+  const finalizeDelete = async (account: AnyAccount, entry: DeletedEntry) => {
+    const accountId = `${account._tabSlug}_${account._rowIndex}`;
+
+    try {
+      const response = await fetch("/api/sheets/update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tab: "Active Accounts",
+          rowIndex: account._rowIndex,
+          deleteRow: true,
+          expectedValues: {
+            accountName: account.account,
+          },
+        }),
+      });
+
+      if (response.status === 409) {
+        throw new Error("conflict");
+      }
+
+      if (!response.ok) {
+        throw new Error("delete failed");
+      }
+
+      removeFromTrash(entry.id);
+      setPendingDeleteIds((existing) => existing.filter((id) => id !== accountId));
+      await fetchAllTabs();
+      showActionFeedback(`${account.account} deleted.`, "success");
+    } catch {
+      removeFromTrash(entry.id);
+      setPendingDeleteIds((existing) => existing.filter((id) => id !== accountId));
+      showActionFeedback(`Couldn’t delete ${account.account}. The row likely changed, so nothing was removed.`, "error");
+      await fetchAllTabs();
+    } finally {
+      delete deleteTimers.current[entry.id];
+    }
+  };
+
+  const undoDelete = (entryId: string, accountId: string) => {
+    const timer = deleteTimers.current[entryId];
+    if (timer) {
+      window.clearTimeout(timer);
+      delete deleteTimers.current[entryId];
+    }
+    removeFromTrash(entryId);
+    setPendingDeleteIds((existing) => existing.filter((id) => id !== accountId));
+    showActionFeedback("Delete undone.", "success");
+  };
+
+  const handleDelete = async (account: AnyAccount) => {
+    const accountId = `${account._tabSlug}_${account._rowIndex}`;
     const entry: DeletedEntry = {
-      id: `${account._tabSlug}_${account._rowIndex}`,
-      account_id: `${account._tabSlug}_${account._rowIndex}`,
+      id: accountId,
+      account_id: accountId,
       account_name: account.account,
       tab: "Active Accounts",
       action_type: "delete",
@@ -124,18 +209,67 @@ export default function ActiveAccountsPage() {
     };
 
     useTrashStore.getState().addToTrash(entry);
-    setAccounts(accounts.filter((a) => a._rowIndex !== account._rowIndex));
+    setPendingDeleteIds((existing) => [...existing, accountId]);
+    deleteTimers.current[entry.id] = setTimeout(() => {
+      void finalizeDelete(account, entry);
+    }, 5000);
+    showActionFeedbackWithAction(
+      `${account.account} will be deleted in a few seconds.`,
+      "Undo",
+      () => undoDelete(entry.id, accountId),
+      "info"
+    );
   };
 
   const handleRestore = (entry: DeletedEntry) => {
-    removeFromTrash(entry.id);
-    // Restore would require re-adding the row to the sheet
-    // For now, just remove from trash
+    undoDelete(entry.id, entry.account_id);
   };
+
+  const latestContactByAccount = useMemo(() => {
+    const map: Record<string, ActivityLog | null> = {};
+    const sorted = [...mergedLogs].sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    );
+
+    for (const log of sorted) {
+      if (!countsAsContact(log)) continue;
+      if (!map[log.account_id]) {
+        map[log.account_id] = log;
+      }
+    }
+
+    return map;
+  }, [mergedLogs]);
+
+  const nextFollowUpByAccount = useMemo(() => {
+    const map: Record<string, string> = {};
+    const sorted = [...mergedLogs].sort(
+      (a, b) => new Date(a.follow_up_date || "9999-12-31").getTime() - new Date(b.follow_up_date || "9999-12-31").getTime()
+    );
+
+    for (const log of sorted) {
+      if (!log.follow_up_date) continue;
+      if (!map[log.account_id]) {
+        map[log.account_id] = log.follow_up_date;
+      }
+    }
+
+    return map;
+  }, [mergedLogs]);
+
+  const ordersByAccount = useMemo(() => {
+    const map: Record<string, OrderRecord[]> = {};
+    for (const order of orders) {
+      map[order.account_id] = [...(map[order.account_id] ?? []), order];
+    }
+    return map;
+  }, [orders]);
 
   const visibleAccounts = useMemo(() => {
     const normalized = search.trim().toLowerCase();
     const filtered = accounts.filter((account) => {
+      const accountId = `${account._tabSlug}_${account._rowIndex}`;
+      if (pendingDeleteIds.includes(accountId)) return false;
       if (!normalized) return true;
       return [
         account.account,
@@ -150,7 +284,36 @@ export default function ActiveAccountsPage() {
         .includes(normalized);
     });
 
-    return [...filtered].sort((a, b) => {
+    const focusFiltered = filtered.filter((account) => {
+      if (!focus) return true;
+
+      const accountId = `${account._tabSlug}_${account._rowIndex}`;
+      const health = getAccountHealth(account, mergedLogs);
+      const followUpDate = nextFollowUpByAccount[accountId];
+      const parsedFollowUp = followUpDate ? new Date(followUpDate) : null;
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      if (focus === "overdue-followup") {
+        return Boolean(parsedFollowUp && parsedFollowUp.getTime() < today.getTime());
+      }
+      if (focus === "today-followup") {
+        return Boolean(parsedFollowUp && parsedFollowUp.getTime() === today.getTime());
+      }
+      if (focus === "upcoming-followup") {
+        return Boolean(parsedFollowUp && parsedFollowUp.getTime() > today.getTime());
+      }
+      if (focus === "health-critical") {
+        return health.tone === "critical" || health.tone === "at-risk";
+      }
+      if (focus === "buyers") {
+        return (ordersByAccount[accountId]?.length ?? 0) > 0;
+      }
+
+      return true;
+    });
+
+    return [...focusFiltered].sort((a, b) => {
       if (sortBy === "name") return a.account.localeCompare(b.account);
       if (sortBy === "oldest") return dateToTimestamp(a.contactDate) - dateToTimestamp(b.contactDate);
       if (sortBy === "order") {
@@ -160,7 +323,7 @@ export default function ActiveAccountsPage() {
       }
       return dateToTimestamp(b.contactDate) - dateToTimestamp(a.contactDate);
     });
-  }, [accounts, search, sortBy]);
+  }, [accounts, focus, mergedLogs, nextFollowUpByAccount, ordersByAccount, pendingDeleteIds, search, sortBy]);
 
   const orderTotal = useMemo(
     () =>
@@ -172,45 +335,17 @@ export default function ActiveAccountsPage() {
     [visibleAccounts]
   );
 
-  const latestContactByAccount = useMemo(() => {
-    const map: Record<string, ActivityLog | null> = {};
-    const sorted = [...logs].sort(
-      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-    );
+  const healthSummary = useMemo(() => {
+    const critical = visibleAccounts.filter((account) => {
+      const health = getAccountHealth(account, mergedLogs);
+      return health.tone === "critical" || health.tone === "at-risk";
+    }).length;
 
-    for (const log of sorted) {
-      if (!countsAsContact(log)) continue;
-      if (!map[log.account_id]) {
-        map[log.account_id] = log;
-      }
-    }
-
-    return map;
-  }, [logs]);
-
-  const nextFollowUpByAccount = useMemo(() => {
-    const map: Record<string, string> = {};
-    const sorted = [...logs].sort(
-      (a, b) => new Date(a.follow_up_date || "9999-12-31").getTime() - new Date(b.follow_up_date || "9999-12-31").getTime()
-    );
-
-    for (const log of sorted) {
-      if (!log.follow_up_date) continue;
-      if (!map[log.account_id]) {
-        map[log.account_id] = log.follow_up_date;
-      }
-    }
-
-    return map;
-  }, [logs]);
-
-  const ordersByAccount = useMemo(() => {
-    const map: Record<string, OrderRecord[]> = {};
-    for (const order of orders) {
-      map[order.account_id] = [...(map[order.account_id] ?? []), order];
-    }
-    return map;
-  }, [orders]);
+    return {
+      critical,
+      healthy: visibleAccounts.filter((account) => getAccountHealth(account, mergedLogs).tone === "healthy").length,
+    };
+  }, [mergedLogs, visibleAccounts]);
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
@@ -267,10 +402,14 @@ export default function ActiveAccountsPage() {
         </div>
       ) : (
         <div className="space-y-5">
-          <div className="grid gap-3 md:grid-cols-3">
+          <div className="grid gap-3 md:grid-cols-4">
             <div className="rounded-2xl border border-rs-border/70 bg-white/5 p-4">
               <div className="text-[11px] uppercase tracking-[0.3em] text-[#af9fe6]">Active Deals</div>
               <div className="mt-2 text-3xl font-black text-rs-cream">{visibleAccounts.length}</div>
+            </div>
+            <div className="rounded-2xl border border-rs-border/70 bg-white/5 p-4">
+              <div className="text-[11px] uppercase tracking-[0.3em] text-[#af9fe6]">Health Risk</div>
+              <div className="mt-2 text-3xl font-black text-[#ffd6e8]">{healthSummary.critical}</div>
             </div>
             <div className="rounded-2xl border border-rs-border/70 bg-white/5 p-4">
               <div className="text-[11px] uppercase tracking-[0.3em] text-[#af9fe6]">Needs Follow Up</div>
@@ -285,6 +424,12 @@ export default function ActiveAccountsPage() {
               </div>
             </div>
           </div>
+
+          {focus && (
+            <div className="rounded-2xl border border-rs-gold/30 bg-rs-gold/10 px-4 py-3 text-sm text-rs-cream">
+              Focus filter active: <span className="font-semibold">{focus.replace(/-/g, " ")}</span>
+            </div>
+          )}
 
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
             <div className="flex-1">
@@ -320,6 +465,7 @@ export default function ActiveAccountsPage() {
                 <th className="text-left py-3 px-4 text-rs-gold font-semibold">Account</th>
                 <th className="text-left py-3 px-4 text-rs-gold font-semibold">Contact</th>
                 <th className="text-left py-3 px-4 text-rs-gold font-semibold">Status</th>
+                <th className="text-left py-3 px-4 text-rs-gold font-semibold">Health</th>
                 <th className="text-left py-3 px-4 text-rs-gold font-semibold">Next Steps</th>
                 <th className="text-left py-3 px-4 text-rs-gold font-semibold">Last Contact</th>
                 <th className="text-left py-3 px-4 text-rs-gold font-semibold">Next Follow-Up</th>
@@ -338,6 +484,7 @@ export default function ActiveAccountsPage() {
                 const followUpDate = nextFollowUpByAccount[accountId];
                 const stats = getOrderStats(ordersByAccount[accountId] ?? []);
                 const displayLastContact = latestContact?.created_at || account.contactDate;
+                const health = getAccountHealth(account, mergedLogs);
 
                 return (
                   <tr
@@ -423,6 +570,23 @@ export default function ActiveAccountsPage() {
                     )}
                   </td>
 
+                  <td className="py-3 px-4">
+                    <div
+                      className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold ${
+                        health.tone === "healthy"
+                          ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-100"
+                          : health.tone === "watch"
+                            ? "border-yellow-400/30 bg-yellow-400/10 text-yellow-100"
+                            : health.tone === "at-risk"
+                              ? "border-orange-400/30 bg-orange-400/10 text-orange-100"
+                              : "border-rs-punch/40 bg-rs-punch/10 text-[#ffd6e8]"
+                      }`}
+                      title={health.reasons.join(" · ") || "Account looks healthy"}
+                    >
+                      {health.label} · {health.score}
+                    </div>
+                  </td>
+
                   {/* Next Steps - Editable */}
                   <td className="py-3 px-4">
                     {editingCell === `next_${account._rowIndex}` ? (
@@ -505,5 +669,13 @@ export default function ActiveAccountsPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function ActiveAccountsPage() {
+  return (
+    <Suspense fallback={<div className="p-6 text-sm text-gray-400">Loading active accounts...</div>}>
+      <ActiveAccountsPageContent />
+    </Suspense>
   );
 }

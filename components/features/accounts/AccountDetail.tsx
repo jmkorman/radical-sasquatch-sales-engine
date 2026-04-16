@@ -15,7 +15,7 @@ import { QuickActions } from "./QuickActions";
 import { LogOutreachModal } from "@/components/features/dashboard/LogOutreachModal";
 import { todayISO, formatDate, formatDateShort } from "@/lib/utils/dates";
 import { formatActivityNote } from "@/lib/activity/notes";
-import { useOutreachStore, OutreachEntry } from "@/stores/useOutreachStore";
+import { useOutreachStore } from "@/stores/useOutreachStore";
 import { useTrashStore } from "@/stores/useTrashStore";
 import { countsAsContact } from "@/lib/activity/helpers";
 import { STATUS_VALUES } from "@/lib/utils/constants";
@@ -24,24 +24,12 @@ import { ContactManager } from "./ContactManager";
 import { PlaybookPanel } from "./PlaybookPanel";
 import { getOrderStats } from "@/lib/orders/helpers";
 import { useSheetStore } from "@/stores/useSheetStore";
-
-function localEntryToLog(e: OutreachEntry, rowIndex: number): ActivityLog {
-  return {
-    id: e.id,
-    account_id: e.account_id,
-    tab: e.tab,
-    row_index: rowIndex,
-    account_name: e.account_name,
-    action_type: e.action_type as ActionType,
-    note: e.note || null,
-    status_before: e.status_before || null,
-    status_after: e.status_after || null,
-    follow_up_date: e.follow_up_date,
-    notion_task_id: null,
-    source: "local",
-    created_at: e.created_at,
-  };
-}
+import { useUIStore } from "@/stores/useUIStore";
+import { outreachEntriesToActivityLogs, mergeActivityLogs } from "@/lib/activity/local";
+import { getLogsForAccount, getScheduledFollowUpLogForAccount } from "@/lib/activity/timeline";
+import { buildLegacyAccountId } from "@/lib/accounts/identity";
+import { persistActivityEntry } from "@/lib/activity/persist";
+import { getAccountHealth } from "@/lib/accounts/health";
 
 interface AccountDetailProps {
   account: AnyAccount;
@@ -52,7 +40,9 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
   const outreachStore = useOutreachStore();
   const deletedLogs = useTrashStore((state) => state.deletedLogs);
   const { fetchAllTabs } = useSheetStore();
-  const accountId = `${account._tabSlug}_${account._rowIndex}`;
+  const showActionFeedback = useUIStore((state) => state.showActionFeedback);
+  const showActionFeedbackWithAction = useUIStore((state) => state.showActionFeedbackWithAction);
+  const accountId = buildLegacyAccountId(account._tabSlug, account._rowIndex);
 
   const [showLogModal, setShowLogModal] = useState(false);
   const [detailDraft, setDetailDraft] = useState({
@@ -64,26 +54,31 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
     email: account.email || "",
     order: "order" in account ? account.order || "" : "",
   });
+  const [savedDetailDraft, setSavedDetailDraft] = useState({
+    accountName: account.account,
+    contactName: "contactName" in account ? account.contactName : "",
+    type: account.type || "",
+    location: "location" in account ? account.location || "" : "",
+    phone: account.phone || "",
+    email: account.email || "",
+    order: "order" in account ? account.order || "" : "",
+  });
+  const [savedNotes, setSavedNotes] = useState(account.notes);
+  const [savedNextSteps, setSavedNextSteps] = useState(account.nextSteps);
   const [notes, setNotes] = useState(account.notes);
   const [nextSteps, setNextSteps] = useState(account.nextSteps);
   const [currentStatus, setCurrentStatus] = useState<string>(account.status);
-  // Initialize journal with server logs + any local entries not already in server data
-  const [journalEntries, setJournalEntries] = useState<ActivityLog[]>(() => {
-    const serverIds = new Set(logs.map((l) => l.id));
-    const localConverted = outreachStore
-      .getEntriesForAccount(accountId)
-      .map((e) => localEntryToLog(e, account._rowIndex))
-      .filter((e) => !serverIds.has(e.id));
-    return [...logs, ...localConverted].sort(
-      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-    );
-  });
+  const [activityOverrides, setActivityOverrides] = useState<Record<string, Partial<ActivityLog>>>({});
+  const [serverJournalLogs, setServerJournalLogs] = useState<ActivityLog[]>(() =>
+    getLogsForAccount(logs, account)
+  );
   const [quickSummary, setQuickSummary] = useState("");
   const [quickDetails, setQuickDetails] = useState("");
   const [quickNextStep, setQuickNextStep] = useState("");
   const [saving, setSaving] = useState(false);
   const [savingNote, setSavingNote] = useState(false);
   const [savingDetails, setSavingDetails] = useState(false);
+  const [updatingFollowUpId, setUpdatingFollowUpId] = useState<string | null>(null);
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [loadingOrders, setLoadingOrders] = useState(true);
   const [loggingOrder, setLoggingOrder] = useState(false);
@@ -110,8 +105,47 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
     loadOrders();
   }, [accountId]);
 
+  useEffect(() => {
+    setServerJournalLogs(getLogsForAccount(logs, account));
+    setActivityOverrides({});
+    setSavedDetailDraft({
+      accountName: account.account,
+      contactName: "contactName" in account ? account.contactName : "",
+      type: account.type || "",
+      location: "location" in account ? account.location || "" : "",
+      phone: account.phone || "",
+      email: account.email || "",
+      order: "order" in account ? account.order || "" : "",
+    });
+    setDetailDraft({
+      accountName: account.account,
+      contactName: "contactName" in account ? account.contactName : "",
+      type: account.type || "",
+      location: "location" in account ? account.location || "" : "",
+      phone: account.phone || "",
+      email: account.email || "",
+      order: "order" in account ? account.order || "" : "",
+    });
+    setSavedNotes(account.notes);
+    setSavedNextSteps(account.nextSteps);
+    setNotes(account.notes);
+    setNextSteps(account.nextSteps);
+    setCurrentStatus(account.status);
+  }, [account, logs]);
+
   const contactName = "contactName" in account ? account.contactName : "";
   const primaryContact = detailDraft.contactName || contactName;
+  const localLogs = useMemo(
+    () => getLogsForAccount(outreachEntriesToActivityLogs(outreachStore.entries), account),
+    [account, outreachStore.entries]
+  );
+  const journalEntries = useMemo(
+    () =>
+      mergeActivityLogs(localLogs, serverJournalLogs).map((entry) =>
+        activityOverrides[entry.id] ? { ...entry, ...activityOverrides[entry.id] } : entry
+      ),
+    [activityOverrides, localLogs, serverJournalLogs]
+  );
 
   const visibleJournalEntries = useMemo(() => {
     const deletedSet = new Set(deletedLogs.map((e) => e.id));
@@ -140,29 +174,55 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
     [visibleJournalEntries]
   );
 
-  const nextFollowUp = useMemo(() => {
-    const nextLog = visibleJournalEntries.find((entry) => Boolean(entry.follow_up_date));
-    return nextLog?.follow_up_date ?? "";
-  }, [visibleJournalEntries]);
+  const nextFollowUpLog = useMemo(
+    () => getScheduledFollowUpLogForAccount(visibleJournalEntries, account),
+    [account, visibleJournalEntries]
+  );
+  const nextFollowUp = nextFollowUpLog?.follow_up_date ?? "";
+  const accountHealth = useMemo(() => getAccountHealth(account, visibleJournalEntries), [account, visibleJournalEntries]);
 
   const saveField = async (field: "notes" | "nextSteps", value: string) => {
     setSaving(true);
-    await fetch("/api/sheets/update", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        tab: account._tab,
-        rowIndex: account._rowIndex,
-        [field]: value,
-      }),
-    });
-    setSaving(false);
+    try {
+      const response = await fetch("/api/sheets/update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tab: account._tab,
+          rowIndex: account._rowIndex,
+          [field]: value,
+          expectedValues: {
+            [field]: field === "nextSteps" ? savedNextSteps || "" : savedNotes || "",
+          },
+        }),
+      });
+      if (response.status === 409) {
+        await fetchAllTabs();
+        throw new Error("Conflict");
+      }
+      if (!response.ok) throw new Error("Failed to save field");
+      if (field === "nextSteps") {
+        setSavedNextSteps(value);
+        setNextSteps(value);
+      } else {
+        setSavedNotes(value);
+        setNotes(value);
+      }
+      showActionFeedback(`${field === "nextSteps" ? "Next steps" : "Notes"} saved.`, "success");
+    } catch {
+      showActionFeedback(
+        `Couldn’t save ${field === "nextSteps" ? "next steps" : "notes"}. The sheet changed, so the latest data was reloaded.`,
+        "error"
+      );
+    } finally {
+      setSaving(false);
+    }
   };
 
   const saveAccountDetails = async () => {
     setSavingDetails(true);
     try {
-      await fetch("/api/sheets/update", {
+      const response = await fetch("/api/sheets/update", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -175,8 +235,26 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
           phone: detailDraft.phone,
           email: detailDraft.email,
           order: "order" in account ? detailDraft.order : undefined,
+          expectedValues: {
+            accountName: savedDetailDraft.accountName || "",
+            contactName: savedDetailDraft.contactName || "",
+            type: savedDetailDraft.type || "",
+            location: "location" in account ? savedDetailDraft.location || "" : "",
+            phone: savedDetailDraft.phone || "",
+            email: savedDetailDraft.email || "",
+            order: "order" in account ? savedDetailDraft.order || "" : "",
+          },
         }),
       });
+      if (response.status === 409) {
+        await fetchAllTabs();
+        throw new Error("Conflict");
+      }
+      if (!response.ok) throw new Error("Failed to save account details");
+      setSavedDetailDraft(detailDraft);
+      showActionFeedback("Account details saved.", "success");
+    } catch {
+      showActionFeedback("Couldn’t save account details because the sheet changed. The latest row was reloaded.", "error");
     } finally {
       setSavingDetails(false);
     }
@@ -192,63 +270,36 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
     countsAsContact?: boolean;
   }) => {
     const statusAfter = entry.statusAfter ?? currentStatus;
-
-    // Save to localStorage immediately (works without Supabase)
-    const storedEntry = outreachStore.addEntry({
-      account_id: accountId,
-      account_name: account.account,
-      tab: account._tabSlug,
-      action_type: entry.actionType,
+    const { log, persistedRemotely } = await persistActivityEntry({
+      account,
+      actionType: entry.actionType,
       note: entry.note,
-      status_before: currentStatus,
-      status_after: statusAfter,
-      follow_up_date: entry.followUpDate || null,
+      followUpDate: entry.followUpDate || null,
+      statusBefore: currentStatus,
+      statusAfter,
       source: entry.source ?? (entry.actionType === "note" ? "internal" : "manual"),
-      activity_kind: entry.activityKind ?? (entry.actionType === "note" ? "note" : "outreach"),
-      counts_as_contact: entry.countsAsContact ?? (entry.actionType !== "note"),
+      activityKind: entry.activityKind ?? (entry.actionType === "note" ? "note" : "outreach"),
+      countsAsContact: entry.countsAsContact ?? (entry.actionType !== "note"),
     });
 
-    // Build the new log entry for local state
-    const localLog: ActivityLog = {
-      id: storedEntry.id,
-      account_id: accountId,
-      tab: account._tabSlug,
-      row_index: account._rowIndex,
-      account_name: account.account,
-      action_type: entry.actionType as ActionType,
-      note: entry.note || null,
-      status_before: currentStatus || null,
-      status_after: statusAfter || null,
-      follow_up_date: entry.followUpDate || null,
-      notion_task_id: null,
-      source: (storedEntry.source as ActivityLog["source"]) ?? "local",
-      created_at: storedEntry.created_at,
-      activity_kind: storedEntry.activity_kind,
-      counts_as_contact: storedEntry.counts_as_contact,
-    };
-    setJournalEntries((existing) => [localLog, ...existing]);
+    if (persistedRemotely) {
+      setServerJournalLogs((existing) => mergeActivityLogs([log], existing));
+    } else {
+      showActionFeedback("Saved locally. Cloud sync failed for this timeline entry.", "info");
+    }
 
-    // Also send to Supabase (non-blocking - no throw)
-    fetch("/api/activity", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        account_id: accountId,
-        tab: account._tabSlug,
-        row_index: account._rowIndex,
-        account_name: account.account,
-        action_type: entry.actionType,
-        note: entry.note,
-        status_before: currentStatus,
-        status_after: statusAfter,
-        follow_up_date: entry.followUpDate || null,
-        source: entry.source ?? (entry.actionType === "note" ? "internal" : "manual"),
-        activity_kind: entry.activityKind ?? (entry.actionType === "note" ? "note" : "outreach"),
-        counts_as_contact: entry.countsAsContact ?? (entry.actionType !== "note"),
-      }),
-    }).catch(() => {});
+    return log;
+  };
 
-    return localLog;
+  const refreshServerJournalLogs = async () => {
+    try {
+      const response = await fetch("/api/activity", { cache: "no-store" });
+      if (!response.ok) throw new Error("Failed to load activity");
+      const data: ActivityLog[] = await response.json();
+      setServerJournalLogs(getLogsForAccount(data, account));
+    } catch {
+      showActionFeedback("Couldn’t refresh the account timeline.", "error");
+    }
   };
 
   const handleSubmitOutreach = async (data: {
@@ -259,20 +310,35 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
   }) => {
     await addJournalEntry(data);
 
-    await fetch("/api/sheets/update", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        tab: account._tab,
-        rowIndex: account._rowIndex,
-        newStatus: data.statusAfter,
-        contactDate: todayISO(),
-        nextSteps: data.note,
-      }),
-    });
-    setCurrentStatus(data.statusAfter);
-    setNextSteps(data.note);
-    await fetchAllTabs();
+    try {
+      const response = await fetch("/api/sheets/update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tab: account._tab,
+          rowIndex: account._rowIndex,
+          newStatus: data.statusAfter,
+          contactDate: todayISO(),
+          nextSteps: data.note,
+          expectedValues: {
+            newStatus: currentStatus || "",
+            nextSteps: savedNextSteps || "",
+          },
+        }),
+      });
+      if (response.status === 409) {
+        await fetchAllTabs();
+        throw new Error("Conflict");
+      }
+      if (!response.ok) throw new Error("Failed to update sheet");
+      setCurrentStatus(data.statusAfter);
+      setSavedNextSteps(data.note);
+      setNextSteps(data.note);
+      await fetchAllTabs();
+      showActionFeedback("Outreach logged and account updated.", "success");
+    } catch {
+      showActionFeedback("Outreach saved locally, but the sheet update failed.", "error");
+    }
 
     if (data.followUpDate) {
       try {
@@ -287,6 +353,94 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
           }),
         });
       } catch { /* non-blocking */ }
+    }
+  };
+
+  const clearScheduledFollowUp = async (log: ActivityLog) => {
+    if (!log.follow_up_date) return;
+
+    const previousFollowUpDate = log.follow_up_date;
+    const localEntry = outreachStore.entries.find((entry) => entry.id === log.id);
+
+    setUpdatingFollowUpId(log.id);
+    setActivityOverrides((existing) => ({
+      ...existing,
+      [log.id]: {
+        ...(existing[log.id] ?? {}),
+        follow_up_date: null,
+      },
+    }));
+
+    if (localEntry) {
+      outreachStore.updateEntry(log.id, { follow_up_date: null });
+    }
+
+    try {
+      if (!localEntry) {
+        const response = await fetch("/api/activity", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: log.id,
+            follow_up_date: null,
+          }),
+        });
+        if (!response.ok) throw new Error("Failed to clear follow-up");
+        const updatedLog: ActivityLog = await response.json();
+        setServerJournalLogs((existing) =>
+          existing.map((entry) => (entry.id === updatedLog.id ? updatedLog : entry))
+        );
+      }
+
+      showActionFeedbackWithAction(
+        `Cleared scheduled follow-up for ${account.account}.`,
+        "Undo",
+        async () => {
+          if (localEntry) {
+            outreachStore.updateEntry(log.id, { follow_up_date: previousFollowUpDate });
+          } else {
+            const response = await fetch("/api/activity", {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                id: log.id,
+                follow_up_date: previousFollowUpDate,
+              }),
+            });
+            if (response.ok) {
+              const restoredLog: ActivityLog = await response.json();
+              setServerJournalLogs((existing) =>
+                existing.map((entry) => (entry.id === restoredLog.id ? restoredLog : entry))
+              );
+            }
+          }
+
+          setActivityOverrides((existing) => ({
+            ...existing,
+            [log.id]: {
+              ...(existing[log.id] ?? {}),
+              follow_up_date: previousFollowUpDate,
+            },
+          }));
+        },
+        "info"
+      );
+    } catch {
+      setActivityOverrides((existing) => ({
+        ...existing,
+        [log.id]: {
+          ...(existing[log.id] ?? {}),
+          follow_up_date: previousFollowUpDate,
+        },
+      }));
+
+      if (localEntry) {
+        outreachStore.updateEntry(log.id, { follow_up_date: previousFollowUpDate });
+      }
+
+      showActionFeedback(`Couldn’t clear the follow-up for ${account.account}.`, "error");
+    } finally {
+      setUpdatingFollowUpId(null);
     }
   };
 
@@ -341,17 +495,33 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
       }
 
       if (account._tab === "Active Accounts") {
-        await fetch("/api/sheets/update", {
+        const sheetResponse = await fetch("/api/sheets/update", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             tab: account._tab,
             rowIndex: account._rowIndex,
             order: `$${amount.toFixed(0)}`,
+            expectedValues: {
+              order: savedDetailDraft.order || "",
+            },
           }),
         });
+
+        if (sheetResponse.status === 409) {
+          await fetchAllTabs();
+          throw new Error("Conflict");
+        }
+
+        if (!sheetResponse.ok) {
+          throw new Error("Failed to update order");
+        }
       }
 
+      setSavedDetailDraft((prev) => ({
+        ...prev,
+        order: `$${amount.toFixed(0)}`,
+      }));
       setDetailDraft((prev) => ({
         ...prev,
         order: `$${amount.toFixed(0)}`,
@@ -362,6 +532,9 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
         notes: "",
       });
       await fetchAllTabs();
+      showActionFeedback("Order logged.", "success");
+    } catch {
+      showActionFeedback("Order saved, but the sheet row changed before the purchase value updated.", "error");
     } finally {
       setLoggingOrder(false);
     }
@@ -381,6 +554,20 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
                   <h2 className="text-xl font-bold text-white">{detailDraft.accountName}</h2>
                   <div className="mt-1 flex flex-wrap items-center gap-2">
                     <Badge status={currentStatus} />
+                    <span
+                      className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold ${
+                        accountHealth.tone === "healthy"
+                          ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-100"
+                          : accountHealth.tone === "watch"
+                            ? "border-yellow-400/30 bg-yellow-400/10 text-yellow-100"
+                            : accountHealth.tone === "at-risk"
+                              ? "border-orange-400/30 bg-orange-400/10 text-orange-100"
+                              : "border-rs-punch/40 bg-rs-punch/10 text-[#ffd6e8]"
+                      }`}
+                      title={accountHealth.reasons.join(" · ") || "Account looks healthy"}
+                    >
+                      {accountHealth.label} {accountHealth.score}
+                    </span>
                     <span className="text-sm text-gray-400">{detailDraft.type || account.type}</span>
                     {lastTouch && (
                       <span className="text-xs text-[#af9fe6]">
@@ -394,16 +581,35 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
                     value={currentStatus}
                     onChange={async (e) => {
                       const newStatus = e.target.value;
+                      const previousStatus = currentStatus;
                       setCurrentStatus(newStatus);
-                      await fetch("/api/sheets/update", {
+                      const response = await fetch("/api/sheets/update", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({
                           tab: account._tab,
                           rowIndex: account._rowIndex,
                           newStatus,
+                          expectedValues: {
+                            newStatus: previousStatus || "",
+                          },
                         }),
                       });
+
+                      if (response.status === 409) {
+                        setCurrentStatus(previousStatus);
+                        await fetchAllTabs();
+                        showActionFeedback("That status changed before your update saved. I refreshed the latest row.", "error");
+                        return;
+                      }
+
+                      if (!response.ok) {
+                        setCurrentStatus(previousStatus);
+                        showActionFeedback("Couldn’t update the account status.", "error");
+                        return;
+                      }
+
+                      showActionFeedback("Status updated.", "success");
                     }}
                     options={STATUS_VALUES.filter((value) => value !== "").map((value) => ({
                       value,
@@ -458,6 +664,20 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
               </div>
 
               <div className="grid gap-3 md:grid-cols-3">
+                <div className="rounded-2xl border border-rs-border/60 bg-black/10 p-3">
+                  <div className="text-[11px] uppercase tracking-[0.2em] text-[#af9fe6]">Health Score</div>
+                  <div className="mt-2 text-sm text-rs-cream">{accountHealth.label} · {accountHealth.score}</div>
+                  <div className="mt-2 text-xs text-[#d8ccfb]">
+                    {accountHealth.reasons[0] || "No urgent cleanup flags"}
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-rs-border/60 bg-black/10 p-3">
+                  <div className="text-[11px] uppercase tracking-[0.2em] text-[#af9fe6]">Next Follow-Up</div>
+                  <div className="mt-2 text-sm text-rs-cream">{nextFollowUp ? formatDate(nextFollowUp) : "No follow-up scheduled"}</div>
+                  <div className="mt-2 text-xs text-[#d8ccfb]">
+                    {nextFollowUp ? "Scheduled from the timeline" : "Add one from a log entry"}
+                  </div>
+                </div>
                 {"kitchen" in account && (
                   <div className="rounded-2xl border border-rs-border/60 bg-black/10 p-3">
                     <div className="text-[11px] uppercase tracking-[0.2em] text-[#af9fe6]">Kitchen</div>
@@ -537,8 +757,18 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
               </div>
 
               {nextFollowUp && (
-                <div className="rounded-xl border border-rs-gold/30 bg-rs-gold/10 px-3 py-2 text-sm text-rs-cream">
-                  Next follow-up: {formatDate(nextFollowUp)}
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rs-gold/30 bg-rs-gold/10 px-3 py-2 text-sm text-rs-cream">
+                  <span>Next follow-up: {formatDate(nextFollowUp)}</span>
+                  {nextFollowUpLog && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={updatingFollowUpId === nextFollowUpLog.id}
+                      onClick={() => clearScheduledFollowUp(nextFollowUpLog)}
+                    >
+                      {updatingFollowUpId === nextFollowUpLog.id ? "Clearing..." : "Clear Schedule"}
+                    </Button>
+                  )}
                 </div>
               )}
 
@@ -670,7 +900,12 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
 
           <Card>
             <h3 className="text-sm font-semibold text-gray-300 mb-3">Account Folder Timeline</h3>
-            <ActivityLogList logs={visibleJournalEntries} />
+            <ActivityLogList
+              logs={visibleJournalEntries}
+              onClearFollowUp={clearScheduledFollowUp}
+              pendingFollowUpId={updatingFollowUpId}
+              onServerLogsChanged={refreshServerJournalLogs}
+            />
           </Card>
         </div>
       </div>

@@ -3,6 +3,7 @@
 import { create } from "zustand";
 import { AllTabsData, AnyAccount } from "@/types/accounts";
 import { SyncStatus } from "@/types/sheets";
+import { useUIStore } from "./useUIStore";
 
 interface SheetStore {
   data: AllTabsData | null;
@@ -35,6 +36,7 @@ export const useSheetStore = create<SheetStore>((set, get) => ({
       set({ data, lastSynced: new Date(), syncStatus: "idle" });
     } catch {
       set({ syncStatus: "error" });
+      useUIStore.getState().showActionFeedback("Couldn’t refresh data from Google Sheets.", "error");
     }
   },
 
@@ -58,6 +60,7 @@ export const useSheetStore = create<SheetStore>((set, get) => ({
       await get().fetchAllTabs();
     } catch {
       set({ data: prev, syncStatus: "error" });
+      useUIStore.getState().showActionFeedback("Couldn’t save that sheet update.", "error");
     }
   },
 }));

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { insertActivityLog, getActivityLogs } from "@/lib/supabase/queries";
+import { deleteActivityLog, getActivityLogs, insertActivityLog, updateActivityLog } from "@/lib/supabase/queries";
 
 export async function GET(request: NextRequest) {
   if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
@@ -26,5 +26,44 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error("Activity POST error:", error);
     return NextResponse.json({ error: "Failed to insert activity log" }, { status: 500 });
+  }
+}
+
+export async function PATCH(request: NextRequest) {
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+    return NextResponse.json({ error: "Supabase not configured" }, { status: 503 });
+  }
+  try {
+    const body = await request.json();
+    if (!body.id) {
+      return NextResponse.json({ error: "id is required" }, { status: 400 });
+    }
+    const log = await updateActivityLog(body.id, {
+      follow_up_date: body.follow_up_date,
+      note: body.note,
+      status_before: body.status_before,
+      status_after: body.status_after,
+    });
+    return NextResponse.json(log);
+  } catch (error) {
+    console.error("Activity PATCH error:", error);
+    return NextResponse.json({ error: "Failed to update activity log" }, { status: 500 });
+  }
+}
+
+export async function DELETE(request: NextRequest) {
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+    return NextResponse.json({ error: "Supabase not configured" }, { status: 503 });
+  }
+  try {
+    const id = request.nextUrl.searchParams.get("id");
+    if (!id) {
+      return NextResponse.json({ error: "id is required" }, { status: 400 });
+    }
+    await deleteActivityLog(id);
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error("Activity DELETE error:", error);
+    return NextResponse.json({ error: "Failed to delete activity log" }, { status: 500 });
   }
 }

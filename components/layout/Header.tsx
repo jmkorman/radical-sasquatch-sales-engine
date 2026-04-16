@@ -1,14 +1,23 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect } from "react";
 import { useSheetStore } from "@/stores/useSheetStore";
+import { useUIStore } from "@/stores/useUIStore";
 import { SyncIndicator } from "@/components/ui/SyncIndicator";
 import { calculateCommission } from "@/lib/commission/calculator";
 import { formatDate } from "@/lib/utils/dates";
 
 export function Header() {
   const { data, syncStatus, lastSynced, fetchAllTabs } = useSheetStore();
+  const { actionFeedback, clearActionFeedback } = useUIStore();
   const commission = data ? calculateCommission(data) : 0;
+
+  useEffect(() => {
+    if (!actionFeedback) return;
+    const timeout = window.setTimeout(() => clearActionFeedback(), 4000);
+    return () => window.clearTimeout(timeout);
+  }, [actionFeedback, clearActionFeedback]);
 
   return (
     <header className="sticky top-0 z-30 border-b border-rs-border/80 bg-[linear-gradient(180deg,rgba(26,15,69,0.96),rgba(16,7,38,0.92))] backdrop-blur">
@@ -69,6 +78,33 @@ export function Header() {
             </div>
           </div>
         </div>
+
+        {actionFeedback && (
+          <div
+            className={`mt-3 rounded-2xl border px-3 py-2 text-sm ${
+              actionFeedback.tone === "error"
+                ? "border-rs-punch/50 bg-rs-punch/10 text-[#ffd6e8]"
+                : actionFeedback.tone === "info"
+                  ? "border-rs-border/70 bg-white/5 text-[#d8ccfb]"
+                  : "border-emerald-400/30 bg-emerald-400/10 text-emerald-100"
+            }`}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <span>{actionFeedback.message}</span>
+              {actionFeedback.actionLabel && actionFeedback.action && (
+                <button
+                  onClick={() => {
+                    actionFeedback.action?.();
+                    clearActionFeedback();
+                  }}
+                  className="text-xs font-semibold uppercase tracking-[0.16em] text-rs-gold hover:text-rs-cream"
+                >
+                  {actionFeedback.actionLabel}
+                </button>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </header>
   );

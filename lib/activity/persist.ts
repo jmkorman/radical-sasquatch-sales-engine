@@ -1,0 +1,77 @@
+"use client";
+
+import { AnyAccount } from "@/types/accounts";
+import { ActivityKind, ActivityLog, ActionType } from "@/types/activity";
+import { useOutreachStore } from "@/stores/useOutreachStore";
+import { outreachEntriesToActivityLogs } from "@/lib/activity/local";
+import { getAccountPrimaryId } from "@/lib/accounts/identity";
+
+interface PersistActivityInput {
+  account: AnyAccount;
+  actionType: string;
+  note: string;
+  followUpDate?: string | null;
+  statusBefore?: string | null;
+  statusAfter?: string | null;
+  source?: string;
+  activityKind?: ActivityKind;
+  countsAsContact?: boolean;
+}
+
+export function createLocalFallbackActivity(input: PersistActivityInput): ActivityLog {
+  const store = useOutreachStore.getState();
+  const storedEntry = store.addEntry({
+    account_id: getAccountPrimaryId(input.account),
+    account_name: input.account.account,
+    tab: input.account._tabSlug,
+    action_type: input.actionType,
+    note: input.note,
+    status_before: input.statusBefore ?? input.account.status ?? "",
+    status_after: input.statusAfter ?? input.account.status ?? "",
+    follow_up_date: input.followUpDate || null,
+    source: input.source ?? (input.actionType === "note" ? "internal" : "manual"),
+    activity_kind: input.activityKind ?? (input.actionType === "note" ? "note" : "outreach"),
+    counts_as_contact: input.countsAsContact ?? (input.actionType !== "note"),
+  });
+
+  return outreachEntriesToActivityLogs([storedEntry])[0];
+}
+
+export async function persistActivityEntry(
+  input: PersistActivityInput
+): Promise<{ log: ActivityLog; persistedRemotely: boolean }> {
+  const payload = {
+    account_id: getAccountPrimaryId(input.account),
+    tab: input.account._tabSlug,
+    row_index: input.account._rowIndex,
+    account_name: input.account.account,
+    action_type: input.actionType,
+    note: input.note,
+    status_before: input.statusBefore ?? input.account.status ?? null,
+    status_after: input.statusAfter ?? input.account.status ?? null,
+    follow_up_date: input.followUpDate || null,
+    source: input.source ?? (input.actionType === "note" ? "internal" : "manual"),
+    activity_kind: input.activityKind ?? (input.actionType === "note" ? "note" : "outreach"),
+    counts_as_contact: input.countsAsContact ?? (input.actionType !== "note"),
+  };
+
+  try {
+    const response = await fetch("/api/activity", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      throw new Error("Failed to persist activity remotely");
+    }
+
+    const log: ActivityLog = await response.json();
+    return { log, persistedRemotely: true };
+  } catch {
+    return {
+      log: createLocalFallbackActivity(input),
+      persistedRemotely: false,
+    };
+  }
+}

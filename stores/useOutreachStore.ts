@@ -37,6 +37,9 @@ export interface OutreachEntry {
 interface OutreachStore {
   entries: OutreachEntry[];
   addEntry: (entry: Omit<OutreachEntry, "id" | "created_at">) => OutreachEntry;
+  restoreEntry: (entry: OutreachEntry) => void;
+  updateEntry: (id: string, updates: Partial<OutreachEntry>) => void;
+  removeEntry: (id: string) => void;
   getEntriesForAccount: (accountId: string) => OutreachEntry[];
   getLatestForAccount: (accountId: string) => OutreachEntry | null;
 }
@@ -57,6 +60,23 @@ export const useOutreachStore = create<OutreachStore>()(
         }));
         return newEntry;
       },
+
+      restoreEntry: (entry) =>
+        set((state) => ({
+          entries: [entry, ...state.entries.filter((existing) => existing.id !== entry.id)],
+        })),
+
+      updateEntry: (id, updates) =>
+        set((state) => ({
+          entries: state.entries.map((entry) =>
+            entry.id === id ? { ...entry, ...updates } : entry
+          ),
+        })),
+
+      removeEntry: (id) =>
+        set((state) => ({
+          entries: state.entries.filter((entry) => entry.id !== id),
+        })),
 
       getEntriesForAccount: (accountId) => {
         return get().entries.filter((e) => e.account_id === accountId);

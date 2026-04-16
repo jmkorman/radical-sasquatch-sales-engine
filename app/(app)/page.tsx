@@ -16,6 +16,10 @@ import { Spinner } from "@/components/ui/Spinner";
 import { Card } from "@/components/ui/Card";
 import { formatDateShort, daysSince } from "@/lib/utils/dates";
 import { countsAsContact } from "@/lib/activity/helpers";
+import { mergeActivityLogs, outreachEntriesToActivityLogs } from "@/lib/activity/local";
+import { buildLatestContactMapByAccount, getAllAccounts } from "@/lib/activity/timeline";
+import { getAccountPrimaryId } from "@/lib/accounts/identity";
+import { getAccountHealth } from "@/lib/accounts/health";
 
 function orderPotential(value: string) {
   return parseFloat((value || "").replace(/[^0-9.]/g, "")) || 0;
@@ -30,67 +34,35 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
 
   const localLogs = useMemo<ActivityLog[]>(() => {
-    return outreachStore.entries.map((e) => {
-      const parts = e.account_id.split("_");
-      const rowIndex = parseInt(parts[parts.length - 1], 10);
-      return {
-        id: e.id,
-        account_id: e.account_id,
-        tab: e.tab,
-        row_index: rowIndex,
-        account_name: e.account_name,
-        action_type: e.action_type as ActionType,
-        note: e.note || null,
-        status_before: e.status_before || null,
-        status_after: e.status_after || null,
-        follow_up_date: e.follow_up_date,
-        notion_task_id: null,
-        source: e.source ?? "local",
-        created_at: e.created_at,
-        activity_kind: e.activity_kind,
-        counts_as_contact: e.counts_as_contact,
-      };
-    });
+    return outreachEntriesToActivityLogs(outreachStore.entries);
   }, [outreachStore.entries]);
 
   const mergedLogs = useMemo<ActivityLog[]>(() => {
-    const byId = new Map<string, ActivityLog>();
-    [...serverLogs, ...localLogs].forEach((log) => {
-      if (!byId.has(log.id)) {
-        byId.set(log.id, log);
-      }
-    });
-    return [...byId.values()].sort(
-      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-    );
+    return mergeActivityLogs(localLogs, serverLogs);
   }, [localLogs, serverLogs]);
 
   const contactActivityMap = useMemo<Record<string, ActivityLog>>(() => {
-    const map: Record<string, ActivityLog> = {};
-    for (const log of mergedLogs) {
-      if (!map[log.account_id] && countsAsContact(log)) {
-        map[log.account_id] = log;
-      }
-    }
-    return map;
-  }, [mergedLogs]);
+    if (!data) return {};
+    return buildLatestContactMapByAccount(getAllAccounts(data), mergedLogs);
+  }, [data, mergedLogs]);
 
   useEffect(() => {
     if (!data) return;
+    const currentData = data;
 
     async function loadDashboardData() {
       try {
         const [activityRes, orderRes] = await Promise.all([
-          fetch("/api/activity"),
-          fetch("/api/orders"),
+          fetch("/api/activity", { cache: "no-store" }),
+          fetch("/api/orders", { cache: "no-store" }),
         ]);
         const activityData: ActivityLog[] = activityRes.ok ? await activityRes.json() : [];
         const orderData: OrderRecord[] = orderRes.ok ? await orderRes.json() : [];
         setServerLogs(activityData);
         setOrders(orderData);
-        setHitList(buildHitList(data, buildLatestContactMap([...activityData, ...localLogs])));
+        setHitList(buildHitList(currentData, mergeActivityLogs(localLogs, activityData)));
       } catch {
-        setHitList(buildHitList(data, buildLatestContactMap(localLogs)));
+        setHitList(buildHitList(currentData, localLogs));
       } finally {
         setLoading(false);
       }
@@ -108,12 +80,11 @@ export default function DashboardPage() {
   }
 
   const counts = getStatusCounts(data);
-  const followUpQueue = buildFollowUpQueue(data, buildLatestContactMap(mergedLogs));
+  const followUpQueue = buildFollowUpQueue(data, mergedLogs);
   const activeDeals = data.activeAccounts.filter((account) => account.status !== "Closed - Won");
   const staleActiveDeals = [...activeDeals]
     .map((account) => {
-      const accountId = `${account._tabSlug}_${account._rowIndex}`;
-      const latestContact = contactActivityMap[accountId];
+      const latestContact = contactActivityMap[getAccountPrimaryId(account)];
       const lastTouch = latestContact?.created_at || account.contactDate;
       return {
         account,
@@ -136,13 +107,17 @@ export default function DashboardPage() {
         account.status === "Researched" &&
         Boolean(account.contactName) &&
         Boolean(account.nextSteps) &&
-        !contactActivityMap[`${account._tabSlug}_${account._rowIndex}`]
+        !contactActivityMap[getAccountPrimaryId(account)]
     )
     .slice(0, 5);
 
   const blockedDeals = activeDeals
     .filter((account) => !account.contactName || !account.nextSteps || (!account.email && !account.phone))
     .slice(0, 5);
+  const healthRiskCount = activeDeals.filter((account) => {
+    const health = getAccountHealth(account, mergedLogs);
+    return health.tone === "critical" || health.tone === "at-risk";
+  }).length;
 
   const recentOrders = [...orders]
     .sort((a, b) => new Date(b.order_date).getTime() - new Date(a.order_date).getTime())
@@ -174,9 +149,9 @@ export default function DashboardPage() {
         <div className="space-y-4">
           <Section title="Today&apos;s Follow-Ups" subtitle="What needs action now or soon.">
             <div className="grid gap-3 md:grid-cols-3">
-              <MetricCard label="Overdue" value={String(overdue.length)} />
-              <MetricCard label="Due Today" value={String(dueToday.length)} />
-              <MetricCard label="Upcoming" value={String(upcoming.length)} />
+              <MetricCard label="Overdue" value={String(overdue.length)} href="/active-accounts?focus=overdue-followup&sort=oldest" />
+              <MetricCard label="Due Today" value={String(dueToday.length)} href="/active-accounts?focus=today-followup&sort=recent" />
+              <MetricCard label="Upcoming" value={String(upcoming.length)} href="/active-accounts?focus=upcoming-followup&sort=recent" />
             </div>
             <FollowUpQueue items={[...overdue, ...dueToday, ...upcoming]} />
           </Section>
@@ -210,7 +185,7 @@ export default function DashboardPage() {
           <Section title="Revenue Pulse" subtitle="Recent orders and buying-account momentum.">
             <div className="grid gap-3 sm:grid-cols-2">
               <MetricCard label="Recent Purchase Total" value={`$${orderTotal.toLocaleString("en-US", { maximumFractionDigits: 0 })}`} />
-              <MetricCard label="Buying Accounts" value={String(buyingAccounts)} />
+              <MetricCard label="Buying Accounts" value={String(buyingAccounts)} href="/active-accounts?focus=buyers&sort=order" />
             </div>
             <SimpleAccountList
               items={recentOrders.map((order) => ({
@@ -224,6 +199,10 @@ export default function DashboardPage() {
           </Section>
 
           <Section title="Blocked Deals" subtitle="Missing contact data or next-step hygiene.">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <MetricCard label="Health Risk" value={String(healthRiskCount)} href="/active-accounts?focus=health-critical&sort=oldest" />
+              <MetricCard label="Blocked Deals" value={String(blockedDeals.length)} href="/active-accounts?focus=health-critical&sort=oldest" />
+            </div>
             <SimpleAccountList
               items={blockedDeals.map((account) => ({
                 href: `/accounts/${account._tabSlug}/${account._rowIndex}`,
@@ -251,22 +230,9 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      <RecentActivity entries={outreachStore.entries} />
+      <RecentActivity entries={mergedLogs} />
     </div>
   );
-}
-
-function buildLatestContactMap(logs: ActivityLog[]): Record<string, ActivityLog> {
-  const map: Record<string, ActivityLog> = {};
-  const sorted = [...logs].sort(
-    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-  );
-  for (const log of sorted) {
-    if (!map[log.account_id] && countsAsContact(log)) {
-      map[log.account_id] = log;
-    }
-  }
-  return map;
 }
 
 function Section({
@@ -289,12 +255,24 @@ function Section({
   );
 }
 
-function MetricCard({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-2xl border border-rs-border/70 bg-white/5 p-4">
+function MetricCard({ label, value, href }: { label: string; value: string; href?: string }) {
+  const className = "rounded-2xl border border-rs-border/70 bg-white/5 p-4 transition-colors hover:border-rs-gold/40 hover:bg-white/10";
+  const content = (
+    <>
       <div className="text-[11px] uppercase tracking-[0.3em] text-[#af9fe6]">{label}</div>
       <div className="mt-2 text-3xl font-black text-rs-cream">{value}</div>
-    </div>
+      {href ? <div className="mt-2 text-xs text-rs-gold">Open working list</div> : null}
+    </>
+  );
+
+  if (!href) {
+    return <div className={className}>{content}</div>;
+  }
+
+  return (
+    <Link href={href} className={className}>
+      {content}
+    </Link>
   );
 }
 

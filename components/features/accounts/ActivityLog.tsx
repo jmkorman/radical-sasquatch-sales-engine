@@ -1,11 +1,15 @@
 "use client";
 
+import { useState } from "react";
 import { ActivityLog as ActivityLogType } from "@/types/activity";
 import { formatDate } from "@/lib/utils/dates";
 import { parseActivityNote } from "@/lib/activity/notes";
 import Link from "next/link";
 import { Button } from "@/components/ui/Button";
 import { useTrashStore } from "@/stores/useTrashStore";
+import { useUIStore } from "@/stores/useUIStore";
+import { useOutreachStore } from "@/stores/useOutreachStore";
+import { activityLogToOutreachEntry } from "@/lib/activity/local";
 
 const ACTION_ICONS: Record<string, string> = {
   call: "M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z",
@@ -17,15 +21,104 @@ const ACTION_ICONS: Record<string, string> = {
 export function ActivityLogList({
   logs,
   showDeleted = false,
+  onClearFollowUp,
+  pendingFollowUpId = null,
+  onServerLogsChanged,
 }: {
   logs: ActivityLogType[];
   showDeleted?: boolean;
+  onClearFollowUp?: (log: ActivityLogType) => void;
+  pendingFollowUpId?: string | null;
+  onServerLogsChanged?: () => Promise<void> | void;
 }) {
   const { deletedLogs, addLogToTrash, restoreLogFromTrash } = useTrashStore();
+  const showActionFeedbackWithAction = useUIStore((state) => state.showActionFeedbackWithAction);
+  const showActionFeedback = useUIStore((state) => state.showActionFeedback);
+  const removeEntry = useOutreachStore((state) => state.removeEntry);
+  const restoreEntry = useOutreachStore((state) => state.restoreEntry);
+  const [busyId, setBusyId] = useState<string | null>(null);
   const deletedIds = new Set(deletedLogs.map((entry) => entry.id));
   const visibleLogs = showDeleted
     ? logs
     : logs.filter((log) => !deletedIds.has(log.id));
+
+  async function restoreLog(log: ActivityLogType) {
+    if (busyId) return;
+    setBusyId(log.id);
+
+    try {
+      if (log.source === "local") {
+        restoreEntry(activityLogToOutreachEntry(log));
+      } else {
+        const response = await fetch("/api/activity", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            account_id: log.account_id,
+            tab: log.tab,
+            row_index: log.row_index,
+            account_name: log.account_name,
+            action_type: log.action_type,
+            note: log.note,
+            status_before: log.status_before,
+            status_after: log.status_after,
+            follow_up_date: log.follow_up_date,
+            notion_task_id: log.notion_task_id,
+            source: log.source,
+            activity_kind: log.activity_kind,
+            counts_as_contact: log.counts_as_contact,
+            created_at: log.created_at,
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error("Failed to restore remote log");
+        }
+
+        await onServerLogsChanged?.();
+      }
+
+      restoreLogFromTrash(log.id);
+      showActionFeedback("Timeline entry restored.", "success");
+    } catch {
+      showActionFeedback("Couldn’t restore that timeline entry.", "error");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function trashLog(log: ActivityLogType) {
+    if (busyId) return;
+    setBusyId(log.id);
+
+    try {
+      if (log.source === "local") {
+        removeEntry(log.id);
+      } else {
+        const response = await fetch(`/api/activity?id=${encodeURIComponent(log.id)}`, {
+          method: "DELETE",
+        });
+        if (!response.ok) {
+          throw new Error("Failed to delete remote log");
+        }
+        await onServerLogsChanged?.();
+      }
+
+      addLogToTrash(log);
+      showActionFeedbackWithAction(
+        `Deleted timeline entry for ${log.account_name}.`,
+        "Undo",
+        () => {
+          void restoreLog(log);
+        },
+        "info"
+      );
+    } catch {
+      showActionFeedback("Couldn’t delete that timeline entry.", "error");
+    } finally {
+      setBusyId(null);
+    }
+  }
 
   if (visibleLogs.length === 0) {
     return (
@@ -39,6 +132,14 @@ export function ActivityLogList({
     <div className="space-y-3">
       {visibleLogs.map((log) => {
         const parsedNote = parseActivityNote(log.note);
+        const sourceLabel =
+          log.source === "research"
+            ? "Research"
+            : log.source === "internal"
+              ? "Internal"
+              : log.source === "local"
+                ? "Local"
+                : "Saved";
 
         return (
           <div
@@ -53,6 +154,9 @@ export function ActivityLogList({
               <div className="flex-1 min-w-0 space-y-2">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-rs-cream capitalize font-semibold">{log.action_type}</span>
+                  <span className="rounded-full border border-rs-border/60 bg-white/5 px-2 py-0.5 text-[11px] text-[#d8ccfb]">
+                    {sourceLabel}
+                  </span>
                   {log.status_after && log.status_before !== log.status_after && (
                     <span className="text-xs text-[#af9fe6]">
                       {log.status_before || "No Status"} to {log.status_after}
@@ -88,6 +192,17 @@ export function ActivityLogList({
                     {formatDate(log.created_at)}
                   </div>
                   <div className="flex items-center gap-2">
+                    {log.follow_up_date && !showDeleted && onClearFollowUp && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="px-2 py-1 text-xs"
+                        disabled={pendingFollowUpId === log.id}
+                        onClick={() => onClearFollowUp(log)}
+                      >
+                        {pendingFollowUpId === log.id ? "Clearing..." : "Clear Follow-Up"}
+                      </Button>
+                    )}
                     <Link
                       href={`/accounts/${log.tab}/${log.row_index}`}
                       className="text-xs text-rs-gold hover:text-rs-cream"
@@ -98,15 +213,16 @@ export function ActivityLogList({
                       size="sm"
                       variant="ghost"
                       className="px-2 py-1 text-xs"
+                      disabled={busyId === log.id}
                       onClick={() => {
                         if (showDeleted) {
-                          restoreLogFromTrash(log.id);
+                          void restoreLog(log);
                         } else {
-                          addLogToTrash(log);
+                          void trashLog(log);
                         }
                       }}
                     >
-                      {showDeleted ? "Restore" : "Trash"}
+                      {busyId === log.id ? (showDeleted ? "Restoring..." : "Deleting...") : showDeleted ? "Restore" : "Trash"}
                     </Button>
                   </div>
                 </div>
