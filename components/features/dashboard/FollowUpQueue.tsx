@@ -4,8 +4,8 @@ import Link from "next/link";
 import { AnyAccount, AllTabsData } from "@/types/accounts";
 import { ActivityLog } from "@/types/activity";
 import { Card } from "@/components/ui/Card";
-import { parseDateFromText, formatDate, daysSince } from "@/lib/utils/dates";
-import { getAllAccounts, getLatestContactLogForAccount, getResolvedFollowUpDate } from "@/lib/activity/timeline";
+import { formatDate, daysSince } from "@/lib/utils/dates";
+import { getAllAccounts, getResolvedFollowUpDate } from "@/lib/activity/timeline";
 
 interface FollowUpItem {
   account: AnyAccount;
@@ -23,7 +23,6 @@ export function buildFollowUpQueue(
 
   return getAllAccounts(data)
     .map((account) => {
-      const latestLog = getLatestContactLogForAccount(logs, account);
       const followUpRaw = getResolvedFollowUpDate(account, logs);
       const followUpDate = followUpRaw ? new Date(followUpRaw) : null;
 

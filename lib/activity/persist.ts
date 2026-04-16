@@ -1,7 +1,7 @@
 "use client";
 
 import { AnyAccount } from "@/types/accounts";
-import { ActivityKind, ActivityLog, ActionType } from "@/types/activity";
+import { ActivityKind, ActivityLog } from "@/types/activity";
 import { useOutreachStore } from "@/stores/useOutreachStore";
 import { outreachEntriesToActivityLogs } from "@/lib/activity/local";
 import { getAccountPrimaryId } from "@/lib/accounts/identity";

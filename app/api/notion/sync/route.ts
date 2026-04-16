@@ -17,7 +17,7 @@ export async function POST(request: NextRequest) {
     let synced = 0;
     for (const task of completedTasks) {
       // Extract account info from task title if possible
-      const title = (task as any).properties?.Name?.title?.[0]?.plain_text ?? "";
+      const title = (task as { properties?: { Name?: { title?: { plain_text?: string }[] } } }).properties?.Name?.title?.[0]?.plain_text ?? "";
       const accountName = title.replace("Follow up: ", "");
 
       await insertActivityLog({

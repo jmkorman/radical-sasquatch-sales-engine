@@ -176,21 +176,22 @@ export function PipelineTable({ data }: { data: AllTabsData }) {
   };
 
   const handleFieldEdit = async (account: AnyAccount, field: string, value: string) => {
-    const payload: Record<string, any> = {
+    const expectedValues: Record<string, string> = {};
+    const payload: Record<string, unknown> = {
       tab: account._tab,
       rowIndex: account._rowIndex,
-      expectedValues: {},
+      expectedValues,
     };
 
     if (field === "CONTACT_NAME") {
       payload.contactName = value;
-      payload.expectedValues.contactName = account.contactName || "";
+      expectedValues.contactName = account.contactName || "";
     } else if (field === "EMAIL") {
       payload.email = value;
-      payload.expectedValues.email = account.email || "";
+      expectedValues.email = account.email || "";
     } else if (field === "PHONE") {
       payload.phone = value;
-      payload.expectedValues.phone = account.phone || "";
+      expectedValues.phone = account.phone || "";
     }
 
     const response = await fetch("/api/sheets/update", {
@@ -360,7 +361,7 @@ export function PipelineTable({ data }: { data: AllTabsData }) {
       <div className="text-xs text-gray-500">
         {accounts.length} account{accounts.length !== 1 ? "s" : ""}
         {statusFilter && <span className="ml-1 text-rs-gold">· filtered: {statusFilter}</span>}
-        {search && <span className="ml-1">· "{search}"</span>}
+        {search && <span className="ml-1">· &quot;{search}&quot;</span>}
       </div>
 
       {/* Table */}
@@ -705,7 +706,7 @@ function ExpandedRow({
 
         {outreachLogs.length === 0 ? (
           <div className="rounded-lg border border-dashed border-rs-border/40 py-6 text-center text-gray-600">
-            No logged activity yet — click "+ Log Outreach" to start the record.
+            No logged activity yet — click &quot;+ Log Outreach&quot; to start the record.
           </div>
         ) : (
           <div className="space-y-2 max-h-64 overflow-y-auto pr-1">

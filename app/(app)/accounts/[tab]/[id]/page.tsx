@@ -38,7 +38,6 @@ export default function AccountPage() {
   }
 
   // Find the account
-  let account: AnyAccount | undefined;
   const allAccounts: AnyAccount[] = [
     ...data.restaurants,
     ...data.retail,
@@ -46,7 +45,7 @@ export default function AccountPage() {
     ...data.foodTruck,
     ...data.activeAccounts,
   ];
-  account = allAccounts.find(
+  const account = allAccounts.find(
     (a) => a._tabSlug === tab && a._rowIndex === id
   );
 

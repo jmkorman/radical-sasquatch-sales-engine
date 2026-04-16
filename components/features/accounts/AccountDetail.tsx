@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { AnyAccount } from "@/types/accounts";
-import { ActivityLog, ActionType } from "@/types/activity";
+import { ActivityLog } from "@/types/activity";
 import { OrderRecord } from "@/types/orders";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
@@ -27,7 +27,7 @@ import { useSheetStore } from "@/stores/useSheetStore";
 import { useUIStore } from "@/stores/useUIStore";
 import { outreachEntriesToActivityLogs, mergeActivityLogs } from "@/lib/activity/local";
 import { getLogsForAccount, getScheduledFollowUpLogForAccount } from "@/lib/activity/timeline";
-import { buildLegacyAccountId } from "@/lib/accounts/identity";
+import { getAccountPrimaryId } from "@/lib/accounts/identity";
 import { persistActivityEntry } from "@/lib/activity/persist";
 import { getAccountHealth } from "@/lib/accounts/health";
 
@@ -42,7 +42,7 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
   const { fetchAllTabs } = useSheetStore();
   const showActionFeedback = useUIStore((state) => state.showActionFeedback);
   const showActionFeedbackWithAction = useUIStore((state) => state.showActionFeedbackWithAction);
-  const accountId = buildLegacyAccountId(account._tabSlug, account._rowIndex);
+  const accountId = getAccountPrimaryId(account);
 
   const [showLogModal, setShowLogModal] = useState(false);
   const [detailDraft, setDetailDraft] = useState({
