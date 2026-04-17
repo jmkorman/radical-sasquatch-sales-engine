@@ -237,12 +237,6 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
           order: "order" in account ? detailDraft.order : undefined,
           expectedValues: {
             accountName: savedDetailDraft.accountName || "",
-            contactName: savedDetailDraft.contactName || "",
-            type: savedDetailDraft.type || "",
-            location: "location" in account ? savedDetailDraft.location || "" : "",
-            phone: savedDetailDraft.phone || "",
-            email: savedDetailDraft.email || "",
-            order: "order" in account ? savedDetailDraft.order || "" : "",
           },
         }),
       });
