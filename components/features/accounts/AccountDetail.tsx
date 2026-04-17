@@ -606,18 +606,8 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
                           tab: account._tab,
                           rowIndex: account._rowIndex,
                           newStatus,
-                          expectedValues: {
-                            newStatus: previousStatus || "",
-                          },
                         }),
                       });
-
-                      if (response.status === 409) {
-                        setCurrentStatus(previousStatus);
-                        await fetchAllTabs();
-                        showActionFeedback("That status changed before your update saved. I refreshed the latest row.", "error");
-                        return;
-                      }
 
                       if (!response.ok) {
                         setCurrentStatus(previousStatus);
