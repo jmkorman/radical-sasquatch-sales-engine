@@ -2,7 +2,6 @@
 
 import { useState, useMemo } from "react";
 import { AllTabsData, AnyAccount } from "@/types/accounts";
-import { ActivityLog } from "@/types/activity";
 import { PipelineTweaks } from "@/types/pipeline";
 import { LogOutreachModal } from "@/components/features/dashboard/LogOutreachModal";
 import { useSheetStore } from "@/stores/useSheetStore";
@@ -87,9 +86,8 @@ export function HotList({
     followUpDate: string;
   }) => {
     if (!modalAccount) return;
-    let log: ActivityLog;
     try {
-      log = await persistActivityEntry({
+      await persistActivityEntry({
         account: modalAccount,
         actionType: outreachData.actionType,
         note: outreachData.note,
@@ -104,8 +102,6 @@ export function HotList({
       showActionFeedback("Couldn't save outreach entry.", "error");
       return;
     }
-
-    void log;
 
     const response = await fetch("/api/sheets/update", {
       method: "POST",
