@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AnyAccount } from "@/types/accounts";
 import { ActivityLog } from "@/types/activity";
 import { OrderRecord } from "@/types/orders";
@@ -78,6 +78,10 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
   const [saving, setSaving] = useState(false);
   const [savingNote, setSavingNote] = useState(false);
   const [savingDetails, setSavingDetails] = useState(false);
+  const [autoSaveStatus, setAutoSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoSaveStatusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isFirstDetailRender = useRef(true);
   const [updatingFollowUpId, setUpdatingFollowUpId] = useState<string | null>(null);
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [loadingOrders, setLoadingOrders] = useState(true);
@@ -131,7 +135,61 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
     setNotes(account.notes);
     setNextSteps(account.nextSteps);
     setCurrentStatus(account.status);
+    isFirstDetailRender.current = true;
   }, [account, logs]);
+
+  useEffect(() => {
+    if (isFirstDetailRender.current) {
+      isFirstDetailRender.current = false;
+      return;
+    }
+    if (JSON.stringify(detailDraft) === JSON.stringify(savedDetailDraft)) return;
+
+    setAutoSaveStatus("idle");
+    if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+
+    autoSaveTimer.current = setTimeout(() => {
+      void (async () => {
+        setAutoSaveStatus("saving");
+        try {
+          const response = await fetch("/api/sheets/update", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              tab: account._tab,
+              rowIndex: account._rowIndex,
+              accountName: detailDraft.accountName,
+              contactName: detailDraft.contactName,
+              type: detailDraft.type,
+              location: "location" in account ? detailDraft.location : undefined,
+              phone: detailDraft.phone,
+              email: detailDraft.email,
+              order: "order" in account ? detailDraft.order : undefined,
+              expectedValues: { accountName: savedDetailDraft.accountName || "" },
+            }),
+          });
+          if (response.status === 409) {
+            await fetchAllTabs();
+            setAutoSaveStatus("error");
+            showActionFeedback("Sheet changed before auto-save. Latest data reloaded.", "error");
+            return;
+          }
+          if (!response.ok) throw new Error("Save failed");
+          setSavedDetailDraft(detailDraft);
+          setAutoSaveStatus("saved");
+          if (autoSaveStatusTimer.current) clearTimeout(autoSaveStatusTimer.current);
+          autoSaveStatusTimer.current = setTimeout(() => setAutoSaveStatus("idle"), 2500);
+        } catch {
+          setAutoSaveStatus("error");
+        }
+      })();
+    }, 1500);
+
+    return () => {
+      if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detailDraft]);
 
   const contactName = "contactName" in account ? account.contactName : "";
   const primaryContact = detailDraft.contactName || contactName;
@@ -692,11 +750,10 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
 
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <QuickActions phone={detailDraft.phone} email={detailDraft.email} />
-                <div className="flex items-center gap-2">
-                  {savingDetails && <span className="text-xs text-[#af9fe6]">Saving details...</span>}
-                  <Button size="sm" onClick={saveAccountDetails}>
-                    Save Account Details
-                  </Button>
+                <div className="text-xs">
+                  {autoSaveStatus === "saving" && <span className="text-[#af9fe6]">Saving…</span>}
+                  {autoSaveStatus === "saved" && <span className="text-emerald-400">Saved ✓</span>}
+                  {autoSaveStatus === "error" && <span className="text-rs-punch">Couldn&apos;t save</span>}
                 </div>
               </div>
             </div>
