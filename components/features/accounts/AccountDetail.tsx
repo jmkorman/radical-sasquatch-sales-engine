@@ -77,7 +77,6 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
   const [quickNextStep, setQuickNextStep] = useState("");
   const [saving, setSaving] = useState(false);
   const [savingNote, setSavingNote] = useState(false);
-  const [savingDetails, setSavingDetails] = useState(false);
   const [autoSaveStatus, setAutoSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoSaveStatusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -274,41 +273,6 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
       );
     } finally {
       setSaving(false);
-    }
-  };
-
-  const saveAccountDetails = async () => {
-    setSavingDetails(true);
-    try {
-      const response = await fetch("/api/sheets/update", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          tab: account._tab,
-          rowIndex: account._rowIndex,
-          accountName: detailDraft.accountName,
-          contactName: detailDraft.contactName,
-          type: detailDraft.type,
-          location: "location" in account ? detailDraft.location : undefined,
-          phone: detailDraft.phone,
-          email: detailDraft.email,
-          order: "order" in account ? detailDraft.order : undefined,
-          expectedValues: {
-            accountName: savedDetailDraft.accountName || "",
-          },
-        }),
-      });
-      if (response.status === 409) {
-        await fetchAllTabs();
-        throw new Error("Conflict");
-      }
-      if (!response.ok) throw new Error("Failed to save account details");
-      setSavedDetailDraft(detailDraft);
-      showActionFeedback("Account details saved.", "success");
-    } catch {
-      showActionFeedback("Couldn’t save account details because the sheet changed. The latest row was reloaded.", "error");
-    } finally {
-      setSavingDetails(false);
     }
   };
 
