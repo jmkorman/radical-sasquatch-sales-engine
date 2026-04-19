@@ -11,7 +11,7 @@ import { useUIStore } from "@/stores/useUIStore";
 import { parseActivityNote } from "@/lib/activity/notes";
 import { getLogsForAccount } from "@/lib/activity/timeline";
 import { persistActivityEntry } from "@/lib/activity/persist";
-import { todayISO } from "@/lib/utils/dates";
+import { todayISO, getContactAgeTone } from "@/lib/utils/dates";
 import {
   PIPELINE_STATUSES,
   STATUS_PALETTE,
@@ -29,12 +29,11 @@ import { getAccountStableId, getLogStableId } from "@/lib/accounts/identity";
 import { StatusPill, StatusDot } from "./StatusIndicators";
 import { STATUS_VALUES } from "@/lib/utils/constants";
 
-type SortBy = "urgency" | "stale" | "value" | "name" | "recent";
+type SortBy = "urgency" | "stale" | "name" | "recent";
 
 const SORT_OPTIONS: { key: SortBy; label: string }[] = [
   { key: "urgency", label: "Urgency" },
   { key: "stale",   label: "Most Stale" },
-  { key: "value",   label: "$ Value" },
   { key: "name",    label: "A→Z" },
   { key: "recent",  label: "Recent" },
 ];
@@ -116,11 +115,6 @@ export function CommandTable({
         return (daysSincePipeline(b.contactDate) ?? 999) - (daysSincePipeline(a.contactDate) ?? 999);
       if (sortBy === "recent")
         return (daysSincePipeline(a.contactDate) ?? 999) - (daysSincePipeline(b.contactDate) ?? 999);
-      if (sortBy === "value")
-        return (
-          parseDollarsPipeline("estMonthlyOrder" in b ? (b.estMonthlyOrder as string) : "") -
-          parseDollarsPipeline("estMonthlyOrder" in a ? (a.estMonthlyOrder as string) : "")
-        );
       return urgencyScore(b) - urgencyScore(a); // urgency default
     });
   }, [all, search, statusFilter, sortBy, notesByAccountId]);
@@ -692,12 +686,14 @@ function TableRow({
           style={{
             fontSize: 13,
             fontWeight: 600,
-            color:
-              urgencyEnabled && temp.tone === "cold"
-                ? "#ff7c70"
-                : temp.tone === "hot"
-                ? "#64f5ea"
-                : "#fff4e8",
+            color: (() => {
+              const tone = getContactAgeTone(account.contactDate ?? "");
+              if (tone === "fresh") return "#64f5ea";
+              if (tone === "week") return "#fbbf24";
+              if (tone === "twoWeeks") return "#f97316";
+              if (tone === "month") return "#ff7c70";
+              return "#8c7fbd";
+            })(),
             fontFamily: "'Space Grotesk', sans-serif",
           }}
         >

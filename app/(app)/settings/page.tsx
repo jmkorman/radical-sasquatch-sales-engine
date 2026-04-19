@@ -1,6 +1,5 @@
 "use client";
 
-import { TemplateEditor } from "@/components/features/settings/TemplateEditor";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { useSheetStore } from "@/stores/useSheetStore";
@@ -35,8 +34,6 @@ export default function SettingsPage() {
           Notion Sync (automatic via cron)
         </Button>
       </Card>
-
-      <TemplateEditor />
 
       <Card>
         <h3 className="text-lg font-semibold text-white mb-3">Environment</h3>

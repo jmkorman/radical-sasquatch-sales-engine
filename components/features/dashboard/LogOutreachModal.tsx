@@ -30,7 +30,6 @@ export function LogOutreachModal({
   const [statusAfter, setStatusAfter] = useState<string>(account.status || "Contacted");
   const [summary, setSummary] = useState("");
   const [details, setDetails] = useState("");
-  const [objection, setObjection] = useState("");
   const [nextMove, setNextMove] = useState("");
   const [followUpDate, setFollowUpDate] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -39,7 +38,6 @@ export function LogOutreachModal({
     const note = formatActivityNote({
       summary,
       details,
-      objection,
       nextStep: nextMove,
     });
 
@@ -99,13 +97,6 @@ export function LogOutreachModal({
           onChange={(e) => setDetails(e.target.value)}
           placeholder="Capture what happened, objections, timing, and anything you want to remember."
           rows={4}
-        />
-
-        <Input
-          label="Objection / Pushback (optional)"
-          value={objection}
-          onChange={(e) => setObjection(e.target.value)}
-          placeholder="Price too high, already have a supplier, talk to GM first..."
         />
 
         <Input

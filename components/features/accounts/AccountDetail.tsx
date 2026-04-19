@@ -20,7 +20,6 @@ import { countsAsContact } from "@/lib/activity/helpers";
 import { STATUS_VALUES } from "@/lib/utils/constants";
 import { Select } from "@/components/ui/Select";
 import { ContactManager } from "./ContactManager";
-import { PlaybookPanel } from "./PlaybookPanel";
 import { getOrderStats } from "@/lib/orders/helpers";
 import { useSheetStore } from "@/stores/useSheetStore";
 import { useUIStore } from "@/stores/useUIStore";
@@ -899,8 +898,6 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
 
         {/* Right column - activity log */}
         <div className="space-y-4">
-          <PlaybookPanel account={account} />
-
           <Card>
             <h3 className="text-sm font-semibold text-gray-300 mb-3">Account Folder Timeline</h3>
             <ActivityLogList
