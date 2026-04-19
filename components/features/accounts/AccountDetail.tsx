@@ -15,7 +15,6 @@ import { QuickActions } from "./QuickActions";
 import { LogOutreachModal } from "@/components/features/dashboard/LogOutreachModal";
 import { todayISO, formatDate, formatDateShort } from "@/lib/utils/dates";
 import { formatActivityNote } from "@/lib/activity/notes";
-import { useOutreachStore } from "@/stores/useOutreachStore";
 import { useTrashStore } from "@/stores/useTrashStore";
 import { countsAsContact } from "@/lib/activity/helpers";
 import { STATUS_VALUES } from "@/lib/utils/constants";
@@ -25,7 +24,7 @@ import { PlaybookPanel } from "./PlaybookPanel";
 import { getOrderStats } from "@/lib/orders/helpers";
 import { useSheetStore } from "@/stores/useSheetStore";
 import { useUIStore } from "@/stores/useUIStore";
-import { outreachEntriesToActivityLogs, mergeActivityLogs } from "@/lib/activity/local";
+import { mergeActivityLogs } from "@/lib/activity/local";
 import { getLogsForAccount, getScheduledFollowUpLogForAccount } from "@/lib/activity/timeline";
 import { getAccountPrimaryId } from "@/lib/accounts/identity";
 import { persistActivityEntry } from "@/lib/activity/persist";
@@ -37,7 +36,6 @@ interface AccountDetailProps {
 }
 
 export function AccountDetail({ account, logs }: AccountDetailProps) {
-  const outreachStore = useOutreachStore();
   const deletedLogs = useTrashStore((state) => state.deletedLogs);
   const { fetchAllTabs } = useSheetStore();
   const showActionFeedback = useUIStore((state) => state.showActionFeedback);
@@ -176,6 +174,7 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
           if (!response.ok) throw new Error("Save failed");
           setSavedDetailDraft(detailDraft);
           setAutoSaveStatus("saved");
+          void fetchAllTabs({ silent: true });
           if (autoSaveStatusTimer.current) clearTimeout(autoSaveStatusTimer.current);
           autoSaveStatusTimer.current = setTimeout(() => setAutoSaveStatus("idle"), 2500);
         } catch {
@@ -192,16 +191,12 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
 
   const contactName = "contactName" in account ? account.contactName : "";
   const primaryContact = detailDraft.contactName || contactName;
-  const localLogs = useMemo(
-    () => getLogsForAccount(outreachEntriesToActivityLogs(outreachStore.entries), account),
-    [account, outreachStore.entries]
-  );
   const journalEntries = useMemo(
     () =>
-      mergeActivityLogs(localLogs, serverJournalLogs).map((entry) =>
+      mergeActivityLogs(serverJournalLogs).map((entry) =>
         activityOverrides[entry.id] ? { ...entry, ...activityOverrides[entry.id] } : entry
       ),
-    [activityOverrides, localLogs, serverJournalLogs]
+    [activityOverrides, serverJournalLogs]
   );
 
   const visibleJournalEntries = useMemo(() => {
@@ -265,6 +260,7 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
         setSavedNotes(value);
         setNotes(value);
       }
+      void fetchAllTabs({ silent: true });
       showActionFeedback(`${field === "nextSteps" ? "Next steps" : "Notes"} saved.`, "success");
     } catch {
       showActionFeedback(
@@ -286,7 +282,7 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
     countsAsContact?: boolean;
   }) => {
     const statusAfter = entry.statusAfter ?? currentStatus;
-    const { log, persistedRemotely } = await persistActivityEntry({
+    const log = await persistActivityEntry({
       account,
       actionType: entry.actionType,
       note: entry.note,
@@ -298,11 +294,7 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
       countsAsContact: entry.countsAsContact ?? (entry.actionType !== "note"),
     });
 
-    if (persistedRemotely) {
-      setServerJournalLogs((existing) => mergeActivityLogs([log], existing));
-    } else {
-      showActionFeedback("Saved locally. Cloud sync failed for this timeline entry.", "info");
-    }
+    setServerJournalLogs((existing) => mergeActivityLogs([log], existing));
 
     return log;
   };
@@ -324,7 +316,12 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
     note: string;
     followUpDate: string;
   }) => {
-    await addJournalEntry(data);
+    try {
+      await addJournalEntry(data);
+    } catch {
+      showActionFeedback("Couldn’t save that outreach entry to the online timeline.", "error");
+      return;
+    }
 
     try {
       const response = await fetch("/api/sheets/update", {
@@ -353,7 +350,7 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
       await fetchAllTabs();
       showActionFeedback("Outreach logged and account updated.", "success");
     } catch {
-      showActionFeedback("Outreach saved locally, but the sheet update failed.", "error");
+      showActionFeedback("Outreach was logged, but the account update failed.", "error");
     }
 
     if (data.followUpDate) {
@@ -376,7 +373,6 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
     if (!log.follow_up_date) return;
 
     const previousFollowUpDate = log.follow_up_date;
-    const localEntry = outreachStore.entries.find((entry) => entry.id === log.id);
 
     setUpdatingFollowUpId(log.id);
     setActivityOverrides((existing) => ({
@@ -387,48 +383,38 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
       },
     }));
 
-    if (localEntry) {
-      outreachStore.updateEntry(log.id, { follow_up_date: null });
-    }
-
     try {
-      if (!localEntry) {
-        const response = await fetch("/api/activity", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            id: log.id,
-            follow_up_date: null,
-          }),
-        });
-        if (!response.ok) throw new Error("Failed to clear follow-up");
-        const updatedLog: ActivityLog = await response.json();
-        setServerJournalLogs((existing) =>
-          existing.map((entry) => (entry.id === updatedLog.id ? updatedLog : entry))
-        );
-      }
+      const response = await fetch("/api/activity", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: log.id,
+          follow_up_date: null,
+        }),
+      });
+      if (!response.ok) throw new Error("Failed to clear follow-up");
+      const updatedLog: ActivityLog = await response.json();
+      setServerJournalLogs((existing) =>
+        existing.map((entry) => (entry.id === updatedLog.id ? updatedLog : entry))
+      );
 
       showActionFeedbackWithAction(
         `Cleared scheduled follow-up for ${account.account}.`,
         "Undo",
         async () => {
-          if (localEntry) {
-            outreachStore.updateEntry(log.id, { follow_up_date: previousFollowUpDate });
-          } else {
-            const response = await fetch("/api/activity", {
-              method: "PATCH",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                id: log.id,
-                follow_up_date: previousFollowUpDate,
-              }),
-            });
-            if (response.ok) {
-              const restoredLog: ActivityLog = await response.json();
-              setServerJournalLogs((existing) =>
-                existing.map((entry) => (entry.id === restoredLog.id ? restoredLog : entry))
-              );
-            }
+          const response = await fetch("/api/activity", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              id: log.id,
+              follow_up_date: previousFollowUpDate,
+            }),
+          });
+          if (response.ok) {
+            const restoredLog: ActivityLog = await response.json();
+            setServerJournalLogs((existing) =>
+              existing.map((entry) => (entry.id === restoredLog.id ? restoredLog : entry))
+            );
           }
 
           setActivityOverrides((existing) => ({
@@ -449,10 +435,6 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
           follow_up_date: previousFollowUpDate,
         },
       }));
-
-      if (localEntry) {
-        outreachStore.updateEntry(log.id, { follow_up_date: previousFollowUpDate });
-      }
 
       showActionFeedback(`Couldn’t clear the follow-up for ${account.account}.`, "error");
     } finally {
@@ -481,6 +463,9 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
       setQuickSummary("");
       setQuickDetails("");
       setQuickNextStep("");
+      showActionFeedback("Note saved to the online timeline.", "success");
+    } catch {
+      showActionFeedback("Couldn’t save that note to the online timeline.", "error");
     } finally {
       setSavingNote(false);
     }

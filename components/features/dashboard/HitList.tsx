@@ -23,17 +23,22 @@ export function HitList({ items }: { items: HitListItem[] }) {
   }) => {
     if (!modalAccount) return;
 
-    const { persistedRemotely } = await persistActivityEntry({
-      account: modalAccount,
-      actionType: data.actionType,
-      note: data.note,
-      followUpDate: data.followUpDate || null,
-      statusBefore: modalAccount.status,
-      statusAfter: data.statusAfter,
-      source: "manual",
-      activityKind: "outreach",
-      countsAsContact: true,
-    });
+    try {
+      await persistActivityEntry({
+        account: modalAccount,
+        actionType: data.actionType,
+        note: data.note,
+        followUpDate: data.followUpDate || null,
+        statusBefore: modalAccount.status,
+        statusAfter: data.statusAfter,
+        source: "manual",
+        activityKind: "outreach",
+        countsAsContact: true,
+      });
+    } catch {
+      showActionFeedback("Couldn’t save that outreach entry to the online timeline.", "error");
+      return;
+    }
 
     const response = await fetch("/api/sheets/update", {
       method: "POST",
@@ -58,12 +63,7 @@ export function HitList({ items }: { items: HitListItem[] }) {
     }
 
     if (!response.ok) {
-      showActionFeedback(
-        persistedRemotely
-          ? "Outreach saved, but the sheet update failed."
-          : "Saved locally, but the sheet update failed.",
-        "error"
-      );
+      showActionFeedback("Outreach was logged, but the sheet update failed.", "error");
       return;
     }
 
@@ -92,12 +92,7 @@ export function HitList({ items }: { items: HitListItem[] }) {
     }
 
     await fetchAllTabs();
-    showActionFeedback(
-      persistedRemotely
-        ? "Outreach logged from the hit list."
-        : "Outreach logged locally from the hit list. Cloud sync can retry later.",
-      persistedRemotely ? "success" : "info"
-    );
+    showActionFeedback("Outreach logged from the hit list.", "success");
     setModalAccount(null);
   };
 

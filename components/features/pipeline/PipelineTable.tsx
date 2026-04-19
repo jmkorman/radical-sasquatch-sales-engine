@@ -6,15 +6,13 @@ import { ActivityLog } from "@/types/activity";
 import { Tabs } from "@/components/ui/Tabs";
 import { SearchBar } from "@/components/ui/SearchBar";
 import { Badge } from "@/components/ui/Badge";
-import { STATUS_VALUES, TAB_NAMES } from "@/lib/utils/constants";
+import { STATUS_COLORS, STATUS_VALUES, TAB_NAMES } from "@/lib/utils/constants";
 import { formatPhone } from "@/lib/utils/phone";
 import { useSheetStore } from "@/stores/useSheetStore";
-import { useOutreachStore } from "@/stores/useOutreachStore";
 import { LogOutreachModal } from "@/components/features/dashboard/LogOutreachModal";
 import { todayISO, daysSince, dateToTimestamp, parseAppDate, getContactAgeClass } from "@/lib/utils/dates";
 import { parseActivityNote } from "@/lib/activity/notes";
 import { getLatestActivityLogForAccount, getLatestContactLogForAccount, getLogsForAccount } from "@/lib/activity/timeline";
-import { mergeActivityLogs, outreachEntriesToActivityLogs } from "@/lib/activity/local";
 import { persistActivityEntry } from "@/lib/activity/persist";
 import { useUIStore } from "@/stores/useUIStore";
 import Link from "next/link";
@@ -72,7 +70,6 @@ export function PipelineTable({ data }: { data: AllTabsData }) {
   const [editValue, setEditValue] = useState("");
   const [serverLogs, setServerLogs] = useState<ActivityLog[]>([]);
   const { fetchAllTabs } = useSheetStore();
-  const outreachStore = useOutreachStore();
   const showActionFeedback = useUIStore((state) => state.showActionFeedback);
 
   useEffect(() => {
@@ -89,10 +86,7 @@ export function PipelineTable({ data }: { data: AllTabsData }) {
     void loadActivity();
   }, []);
 
-  const mergedLogs = useMemo(
-    () => mergeActivityLogs(outreachEntriesToActivityLogs(outreachStore.entries), serverLogs),
-    [outreachStore.entries, serverLogs]
-  );
+  const mergedLogs = serverLogs;
 
   const allForTab = useMemo(() => getAccountsForTab(data, activeTab), [data, activeTab]);
 
@@ -223,21 +217,25 @@ export function PipelineTable({ data }: { data: AllTabsData }) {
     actionType: string; statusAfter: string; note: string; followUpDate: string;
   }) => {
     if (!modalAccount) return;
-    const { log, persistedRemotely } = await persistActivityEntry({
-      account: modalAccount,
-      actionType: outreachData.actionType,
-      note: outreachData.note,
-      followUpDate: outreachData.followUpDate || null,
-      statusBefore: modalAccount.status,
-      statusAfter: outreachData.statusAfter,
-      source: "manual",
-      activityKind: "outreach",
-      countsAsContact: true,
-    });
-
-    if (persistedRemotely) {
-      setServerLogs((existing) => mergeActivityLogs([log], existing));
+    let log: ActivityLog;
+    try {
+      log = await persistActivityEntry({
+        account: modalAccount,
+        actionType: outreachData.actionType,
+        note: outreachData.note,
+        followUpDate: outreachData.followUpDate || null,
+        statusBefore: modalAccount.status,
+        statusAfter: outreachData.statusAfter,
+        source: "manual",
+        activityKind: "outreach",
+        countsAsContact: true,
+      });
+    } catch {
+      showActionFeedback("Couldn’t save that outreach entry to the online timeline.", "error");
+      return;
     }
+
+    setServerLogs((existing) => [log, ...existing]);
 
     const response = await fetch("/api/sheets/update", {
       method: "POST",
@@ -262,12 +260,7 @@ export function PipelineTable({ data }: { data: AllTabsData }) {
     }
 
     if (!response.ok) {
-      showActionFeedback(
-        persistedRemotely
-          ? "Outreach saved, but the pipeline row failed to update."
-          : "Outreach saved locally, but the pipeline row failed to update.",
-        "error"
-      );
+      showActionFeedback("Outreach was logged, but the pipeline row failed to update.", "error");
       return;
     }
 
@@ -286,12 +279,7 @@ export function PipelineTable({ data }: { data: AllTabsData }) {
 
     await fetchAllTabs();
     setModalAccount(null);
-    showActionFeedback(
-      persistedRemotely
-        ? "Pipeline outreach logged."
-        : "Pipeline outreach saved locally. Cloud sync can retry later.",
-      persistedRemotely ? "success" : "info"
-    );
+    showActionFeedback("Pipeline outreach logged.", "success");
   };
 
   return (
@@ -384,6 +372,7 @@ export function PipelineTable({ data }: { data: AllTabsData }) {
               const latestLog = getLatestActivityLogForAccount(mergedLogs, account);
               const lastTouch = getLatestContactLogForAccount(mergedLogs, account)?.created_at || account.contactDate;
               const { label: contactLabel, daysAgo } = formatContactDate(lastTouch);
+              const statusColorClass = STATUS_COLORS[account.status] || "bg-gray-600";
 
               return (
                 <Fragment key={key}>
@@ -415,16 +404,18 @@ export function PipelineTable({ data }: { data: AllTabsData }) {
                       <select
                         value={account.status}
                         onChange={(e) => handleStatusChange(account, e.target.value)}
-                        className="appearance-none bg-rs-bg text-[11px] border border-rs-border/50 rounded-md px-2 py-1.5 text-gray-300 focus:border-rs-gold focus:outline-none cursor-pointer hover:border-rs-border transition-colors font-medium"
+                        className={`appearance-none text-[11px] border rounded-md px-2 py-1.5 text-white focus:outline-none cursor-pointer transition-colors font-medium shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] ${statusColorClass} border-white/10 hover:border-white/20 focus:border-rs-cream`}
                         style={{
-                          backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2399a3a6' d='M6 9L1 4h10z'/%3E%3C/svg%3E")`,
+                          backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='white' d='M6 9L1 4h10z'/%3E%3C/svg%3E")`,
                           backgroundRepeat: 'no-repeat',
                           backgroundPosition: 'right 4px center',
                           paddingRight: '20px',
                         }}
                       >
-                        {STATUS_VALUES.map(s => (
-                          <option key={s} value={s} className="bg-rs-bg">{s || "(none)"}</option>
+                        {STATUS_VALUES.map((s) => (
+                          <option key={s} value={s} className="bg-rs-bg text-white">
+                            {s || "(none)"}
+                          </option>
                         ))}
                       </select>
                     </td>
