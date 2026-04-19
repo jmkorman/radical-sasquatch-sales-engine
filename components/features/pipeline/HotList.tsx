@@ -470,9 +470,6 @@ function HotCard({
 }) {
   const touch = formatContactPipeline(account.contactDate);
   const temp = tempLabelPipeline(touch.days);
-  const dollars = parseDollarsPipeline(
-    "estMonthlyOrder" in account ? (account.estMonthlyOrder as string) : ""
-  );
   const c = STATUS_PALETTE[account.status] ?? STATUS_PALETTE[""];
   const isBig = tier === "today";
 
@@ -616,24 +613,6 @@ function HotCard({
               {touch.label}
             </div>
           </div>
-          {dollars > 0 && tweaks.showDollars && (
-            <div>
-              <div
-                style={{
-                  fontSize: 9,
-                  color: "#8c7fbd",
-                  letterSpacing: 0.6,
-                  textTransform: "uppercase",
-                  fontWeight: 600,
-                }}
-              >
-                Monthly
-              </div>
-              <div style={{ color: "#64f5ea", fontWeight: 700 }}>
-                {"estMonthlyOrder" in account ? (account.estMonthlyOrder as string) : ""}
-              </div>
-            </div>
-          )}
         </div>
 
         <div style={{ display: "flex", gap: 6 }}>

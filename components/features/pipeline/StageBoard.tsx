@@ -7,7 +7,6 @@ import {
   PIPELINE_STATUSES,
   STATUS_PALETTE,
   urgencyScore,
-  parseDollarsPipeline,
   formatContactPipeline,
   tempLabelPipeline,
   getForPipelineTab,
@@ -180,11 +179,6 @@ function StageColumn({
   tweaks: PipelineTweaks;
 }) {
   const c = STATUS_PALETTE[status];
-  const totalValue = accounts.reduce(
-    (sum, a) =>
-      sum + parseDollarsPipeline("estMonthlyOrder" in a ? (a.estMonthlyOrder as string) : ""),
-    0
-  );
 
   return (
     <div
@@ -241,19 +235,6 @@ function StageColumn({
             {accounts.length}
           </div>
         </div>
-        {tweaks.showDollars && totalValue > 0 && (
-          <div
-            style={{
-              fontSize: 11,
-              color: c.ink,
-              opacity: 0.75,
-              fontFamily: "'Space Grotesk', sans-serif",
-              fontWeight: 600,
-            }}
-          >
-            ${totalValue.toLocaleString()}/mo potential
-          </div>
-        )}
       </div>
 
       {/* Cards */}
@@ -291,9 +272,6 @@ function StageCard({
 }) {
   const touch = formatContactPipeline(account.contactDate);
   const temp = tempLabelPipeline(touch.days);
-  const dollars = parseDollarsPipeline(
-    "estMonthlyOrder" in account ? (account.estMonthlyOrder as string) : ""
-  );
   const isStale = temp.tone === "cold" && touch.days !== null && touch.days > 14;
   const isHot = temp.tone === "hot";
   const glow = isStale
@@ -336,47 +314,12 @@ function StageCard({
         >
           {account.account}
         </div>
-        {dollars > 0 && tweaks.showDollars && (
-          <div
-            style={{
-              fontSize: 11,
-              fontWeight: 700,
-              color: "#64f5ea",
-              fontFamily: "'Space Grotesk', sans-serif",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {"estMonthlyOrder" in account ? (account.estMonthlyOrder as string) : ""}
-          </div>
-        )}
       </div>
 
       <div style={{ fontSize: 10.5, color: "#8c7fbd", marginBottom: 8, letterSpacing: 0.2 }}>
         {account.type}
         {"location" in account && account.location ? ` · ${account.location as string}` : ""}
       </div>
-
-      {/* Value bar */}
-      {tweaks.showDollars && dollars > 0 && (
-        <div
-          style={{
-            height: 3,
-            borderRadius: 2,
-            background: "rgba(73,48,140,0.3)",
-            overflow: "hidden",
-            marginBottom: 8,
-          }}
-        >
-          <div
-            style={{
-              height: "100%",
-              width: `${Math.min(100, (dollars / 9000) * 100)}%`,
-              background: "linear-gradient(90deg, #ffb321, #64f5ea)",
-              borderRadius: 2,
-            }}
-          />
-        </div>
-      )}
 
       <div
         style={{
