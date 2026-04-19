@@ -37,6 +37,8 @@ export function ActivityLogList({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [editingFollowUpId, setEditingFollowUpId] = useState<string | null>(null);
   const [editingFollowUpDate, setEditingFollowUpDate] = useState<string>("");
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
+  const [editingNoteContent, setEditingNoteContent] = useState<string>("");
   const deletedIds = new Set(deletedLogs.map((entry) => entry.id));
   const visibleLogs = showDeleted
     ? logs
@@ -176,22 +178,72 @@ export function ActivityLogList({
                   )}
                 </div>
 
-                {parsedNote.summary && (
-                  <div className="text-rs-cream font-medium">{parsedNote.summary}</div>
+                {editingNoteId !== log.id && (
+                  <>
+                    {parsedNote.summary && (
+                      <div className="text-rs-cream font-medium">{parsedNote.summary}</div>
+                    )}
+
+                    {parsedNote.details && (
+                      <div className="text-[#d8ccfb] whitespace-pre-wrap">{parsedNote.details}</div>
+                    )}
+
+                    {parsedNote.nextStep && (
+                      <div className="text-sm text-rs-gold">
+                        Next: <span className="text-[#ece5ff]">{parsedNote.nextStep}</span>
+                      </div>
+                    )}
+
+                    {!parsedNote.summary && !parsedNote.details && log.note && (
+                      <div className="text-[#d8ccfb] whitespace-pre-wrap">{log.note}</div>
+                    )}
+                  </>
                 )}
 
-                {parsedNote.details && (
-                  <div className="text-[#d8ccfb] whitespace-pre-wrap">{parsedNote.details}</div>
-                )}
-
-                {parsedNote.nextStep && (
-                  <div className="text-sm text-rs-gold">
-                    Next: <span className="text-[#ece5ff]">{parsedNote.nextStep}</span>
+                {editingNoteId === log.id && (
+                  <div className="space-y-2">
+                    <textarea
+                      value={editingNoteContent}
+                      onChange={(e) => setEditingNoteContent(e.target.value)}
+                      className="w-full rounded border border-rs-punch/50 bg-rs-bg/50 px-2 py-1 text-xs text-white font-mono"
+                      rows={4}
+                      placeholder="Edit note..."
+                    />
+                    <div className="flex gap-1">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="px-2 py-1 text-xs"
+                        onClick={async () => {
+                          if (editingNoteContent.trim()) {
+                            try {
+                              const res = await fetch(`/api/activity`, {
+                                method: "PATCH",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ id: log.id, note: editingNoteContent }),
+                              });
+                              if (!res.ok) throw new Error("Failed to update");
+                              setEditingNoteId(null);
+                              showActionFeedback("Note updated", "success");
+                              if (onServerLogsChanged) await onServerLogsChanged();
+                            } catch {
+                              showActionFeedback("Couldn't update note", "error");
+                            }
+                          }
+                        }}
+                      >
+                        Save
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="px-2 py-1 text-xs"
+                        onClick={() => setEditingNoteId(null)}
+                      >
+                        Cancel
+                      </Button>
+                    </div>
                   </div>
-                )}
-
-                {!parsedNote.summary && !parsedNote.details && log.note && (
-                  <div className="text-[#d8ccfb] whitespace-pre-wrap">{log.note}</div>
                 )}
 
                 <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
@@ -199,6 +251,19 @@ export function ActivityLogList({
                     {formatDate(log.created_at)}
                   </div>
                   <div className="flex items-center gap-2">
+                    {!showDeleted && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="px-2 py-1 text-xs"
+                        onClick={() => {
+                          setEditingNoteId(log.id);
+                          setEditingNoteContent(log.note || "");
+                        }}
+                      >
+                        Edit Note
+                      </Button>
+                    )}
                     {log.follow_up_date && !showDeleted && onClearFollowUp && (
                       <Button
                         size="sm"
