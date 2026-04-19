@@ -397,6 +397,10 @@ function StageCard({
                 ? "#64f5ea"
                 : temp.tone === "warm"
                 ? "#ffb321"
+                : temp.tone === "cool"
+                ? "#ffd700"
+                : temp.tone === "grey"
+                ? "#8c7fbd"
                 : "#ff7c70",
             fontFamily: "'Space Grotesk', sans-serif",
           }}

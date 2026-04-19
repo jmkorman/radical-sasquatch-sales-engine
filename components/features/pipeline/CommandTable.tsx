@@ -351,7 +351,6 @@ export function CommandTable({
           <span>Account</span>
           <span>Stage</span>
           <span>Last Touch</span>
-          <span style={{ textAlign: "right" }}>Monthly</span>
           <span>Latest Note</span>
         </div>
 
@@ -586,7 +585,6 @@ function TableRow({
   const touch = formatContactPipeline(account.contactDate);
   const temp = tempLabelPipeline(touch.days);
   const c = STATUS_PALETTE[account.status] ?? STATUS_PALETTE[""];
-  const dollars = parseDollarsPipeline("estMonthlyOrder" in account ? (account.estMonthlyOrder as string) : "");
   const urgencyEnabled = tweaks.urgency !== "off";
   const loud = tweaks.urgency === "loud";
 
@@ -687,24 +685,6 @@ function TableRow({
         )}
       </div>
 
-      {/* Monthly */}
-      <div style={{ padding: rowPad, textAlign: "right" }}>
-        {dollars > 0 ? (
-          <div
-            style={{
-              fontSize: 13,
-              fontWeight: 700,
-              color: tweaks.showDollars ? "#64f5ea" : "#fff4e8",
-              fontFamily: "'Space Grotesk', sans-serif",
-            }}
-          >
-            {"estMonthlyOrder" in account ? (account.estMonthlyOrder as string) : "—"}
-          </div>
-        ) : (
-          <span style={{ color: "#5a4a8a" }}>—</span>
-        )}
-      </div>
-
       {/* Note */}
       <div
         style={{
@@ -768,18 +748,34 @@ function SidePanel({
   );
 
   const tempColor =
-    temp.tone === "hot" ? "#64f5ea" : temp.tone === "warm" ? "#ffb321" : "#ff7c70";
+    temp.tone === "hot"
+      ? "#64f5ea"
+      : temp.tone === "warm"
+      ? "#ffb321"
+      : temp.tone === "cool"
+      ? "#ffd700"
+      : temp.tone === "grey"
+      ? "#8c7fbd"
+      : "#ff7c70";
   const tempBg =
     temp.tone === "hot"
       ? "rgba(100,245,234,0.14)"
       : temp.tone === "warm"
       ? "rgba(255,179,33,0.14)"
+      : temp.tone === "cool"
+      ? "rgba(255,215,0,0.14)"
+      : temp.tone === "grey"
+      ? "rgba(140,127,189,0.14)"
       : "rgba(255,124,112,0.14)";
   const tempBorder =
     temp.tone === "hot"
       ? "rgba(100,245,234,0.35)"
       : temp.tone === "warm"
       ? "rgba(255,179,33,0.35)"
+      : temp.tone === "cool"
+      ? "rgba(255,215,0,0.35)"
+      : temp.tone === "grey"
+      ? "rgba(140,127,189,0.35)"
       : "rgba(255,124,112,0.35)";
 
   return (
@@ -981,7 +977,6 @@ function SidePanel({
             ["Contact", account.contactName || "—"],
             ["Email", account.email || "—"],
             ["Phone", account.phone || "—"],
-            ["Monthly", "estMonthlyOrder" in account ? (account.estMonthlyOrder as string) || "—" : "—"],
             ["Commission", "commissionPct" in account ? (account.commissionPct as string) || "—" : "—"],
           ]
             .filter(([, v]) => v !== "—")
@@ -1000,8 +995,8 @@ function SidePanel({
                 </div>
                 <div
                   style={{
-                    color: k === "Monthly" ? "#64f5ea" : "#fff4e8",
-                    fontWeight: k === "Monthly" ? 700 : 500,
+                    color: "#fff4e8",
+                    fontWeight: 500,
                     wordBreak: "break-word",
                   }}
                 >

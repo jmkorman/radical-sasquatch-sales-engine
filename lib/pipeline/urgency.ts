@@ -74,13 +74,13 @@ export function formatContactPipeline(dateStr: string): ContactInfoPipeline {
 
 export interface TempInfoPipeline {
   label: string;
-  tone: "hot" | "warm" | "cool" | "cold";
+  tone: "hot" | "warm" | "cool" | "cold" | "grey";
 }
 
 export function tempLabelPipeline(days: number | null): TempInfoPipeline {
-  if (days === null) return { label: "Never contacted", tone: "cold" };
+  if (days === null) return { label: "Never contacted", tone: "grey" };
   if (days === 0) return { label: "Touched today", tone: "hot" };
-  if (days <= 3) return { label: "Fresh", tone: "hot" };
+  if (days <= 2) return { label: "Fresh", tone: "hot" };
   if (days <= 7) return { label: "Warm", tone: "warm" };
   if (days <= 14) return { label: "Cooling", tone: "cool" };
   return { label: `Stale — ${days}d`, tone: "cold" };

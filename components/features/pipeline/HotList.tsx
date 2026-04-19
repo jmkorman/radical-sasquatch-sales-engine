@@ -605,6 +605,10 @@ function HotCard({
                     ? "#64f5ea"
                     : temp.tone === "warm"
                     ? "#ffb321"
+                    : temp.tone === "cool"
+                    ? "#ffd700"
+                    : temp.tone === "grey"
+                    ? "#8c7fbd"
                     : "#ff7c70",
                 fontWeight: 700,
               }}
