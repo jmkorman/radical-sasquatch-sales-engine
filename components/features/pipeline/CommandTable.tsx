@@ -333,7 +333,7 @@ export function CommandTable({
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "6px minmax(260px, 1.8fr) 160px 130px 100px minmax(180px, 1.4fr)",
+            gridTemplateColumns: "6px minmax(260px, 1.8fr) 160px 130px minmax(350px, 2fr)",
             gap: 0,
             padding: "8px 16px 8px 22px",
             fontSize: 10,
@@ -597,7 +597,7 @@ function TableRow({
       onClick={onSelect}
       style={{
         display: "grid",
-        gridTemplateColumns: "6px minmax(260px, 1.8fr) 160px 130px 100px minmax(180px, 1.4fr)",
+        gridTemplateColumns: "6px minmax(260px, 1.8fr) 160px 130px minmax(350px, 2fr)",
         gap: 0,
         alignItems: "center",
         background: selected
