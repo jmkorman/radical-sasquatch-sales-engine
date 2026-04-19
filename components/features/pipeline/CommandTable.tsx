@@ -195,7 +195,12 @@ export function CommandTable({
   };
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: selected ? "1fr 420px" : "1fr", gap: 16 }}>
+    <div style={{
+      display: "grid",
+      gridTemplateColumns: selected ? "1fr minmax(280px, 420px)" : "1fr",
+      gap: 16,
+      minWidth: 0,
+    }}>
       <div>
         {/* Sub-tabs */}
         <PipelineSubTabs value={activeTab} setValue={(t) => { setActiveTab(t); setSelected(null); setStatusFilter(""); }} counts={tabCounts} />
@@ -333,7 +338,7 @@ export function CommandTable({
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "6px minmax(260px, 1.8fr) 160px 130px minmax(350px, 2fr)",
+            gridTemplateColumns: "6px minmax(200px, 1.5fr) minmax(120px, 160px) minmax(100px, 130px) minmax(250px, 1.8fr)",
             gap: 0,
             padding: "8px 16px 8px 22px",
             fontSize: 10,
@@ -360,8 +365,11 @@ export function CommandTable({
             border: "1px solid rgba(73,48,140,0.5)",
             borderTop: "none",
             borderRadius: "0 0 14px 14px",
-            overflow: "hidden",
+            overflow: "auto",
+            overflowY: "auto",
+            overflowX: "auto",
             background: "rgba(16,7,38,0.35)",
+            maxHeight: "70vh",
           }}
         >
           {rows.map((account, i) => {
