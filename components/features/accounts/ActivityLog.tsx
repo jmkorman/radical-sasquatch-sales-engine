@@ -8,8 +8,6 @@ import Link from "next/link";
 import { Button } from "@/components/ui/Button";
 import { useTrashStore } from "@/stores/useTrashStore";
 import { useUIStore } from "@/stores/useUIStore";
-import { useOutreachStore } from "@/stores/useOutreachStore";
-import { activityLogToOutreachEntry } from "@/lib/activity/local";
 
 const ACTION_ICONS: Record<string, string> = {
   call: "M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z",
@@ -34,8 +32,6 @@ export function ActivityLogList({
   const { deletedLogs, addLogToTrash, restoreLogFromTrash } = useTrashStore();
   const showActionFeedbackWithAction = useUIStore((state) => state.showActionFeedbackWithAction);
   const showActionFeedback = useUIStore((state) => state.showActionFeedback);
-  const removeEntry = useOutreachStore((state) => state.removeEntry);
-  const restoreEntry = useOutreachStore((state) => state.restoreEntry);
   const [busyId, setBusyId] = useState<string | null>(null);
   const deletedIds = new Set(deletedLogs.map((entry) => entry.id));
   const visibleLogs = showDeleted
@@ -47,21 +43,17 @@ export function ActivityLogList({
     setBusyId(log.id);
 
     try {
-      if (log.source === "local") {
-        restoreEntry(activityLogToOutreachEntry(log));
-      } else {
-        const response = await fetch("/api/activity", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id: log.id, is_deleted: false }),
-        });
+      const response = await fetch("/api/activity", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: log.id, is_deleted: false }),
+      });
 
-        if (!response.ok) {
-          throw new Error("Failed to restore remote log");
-        }
-
-        await onServerLogsChanged?.();
+      if (!response.ok) {
+        throw new Error("Failed to restore remote log");
       }
+
+      await onServerLogsChanged?.();
 
       restoreLogFromTrash(log.id);
       showActionFeedback("Timeline entry restored.", "success");
@@ -75,17 +67,13 @@ export function ActivityLogList({
     setBusyId(log.id);
 
     try {
-      if (log.source === "local") {
-        removeEntry(log.id);
-      } else {
-        const response = await fetch(`/api/activity?id=${encodeURIComponent(log.id)}`, {
-          method: "DELETE",
-        });
-        if (!response.ok) {
-          throw new Error("Failed to delete remote log");
-        }
-        await onServerLogsChanged?.();
+      const response = await fetch(`/api/activity?id=${encodeURIComponent(log.id)}`, {
+        method: "DELETE",
+      });
+      if (!response.ok) {
+        throw new Error("Failed to delete remote log");
       }
+      await onServerLogsChanged?.();
 
       addLogToTrash(log);
       showActionFeedbackWithAction(
@@ -120,9 +108,7 @@ export function ActivityLogList({
             ? "Research"
             : log.source === "internal"
               ? "Internal"
-              : log.source === "local"
-                ? "Local"
-                : "Saved";
+              : "Saved";
 
         return (
           <div

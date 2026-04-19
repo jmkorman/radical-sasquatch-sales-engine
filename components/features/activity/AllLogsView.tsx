@@ -11,8 +11,6 @@ import { parseActivityNote } from "@/lib/activity/notes";
 import { Button } from "@/components/ui/Button";
 import { useTrashStore } from "@/stores/useTrashStore";
 // deletedLogs from localStorage used only for the unloaded badge count
-import { useOutreachStore } from "@/stores/useOutreachStore";
-import { mergeActivityLogs, outreachEntriesToActivityLogs } from "@/lib/activity/local";
 
 const ACTION_OPTIONS = [
   { value: "all", label: "All actions" },
@@ -39,11 +37,7 @@ export function AllLogsView() {
   const [tabFilter, setTabFilter] = useState("all");
   const [showTrash, setShowTrash] = useState(false);
   const deletedLogs = useTrashStore((state) => state.deletedLogs);
-  const outreachEntries = useOutreachStore((state) => state.entries);
-  const mergedLogs = useMemo(
-    () => mergeActivityLogs(logs, outreachEntriesToActivityLogs(outreachEntries)),
-    [logs, outreachEntries]
-  );
+  const mergedLogs = logs;
 
   async function loadLogs() {
     try {

@@ -66,7 +66,7 @@ export function Header() {
               </div>
 
               <button
-                onClick={fetchAllTabs}
+                onClick={() => void fetchAllTabs()}
                 disabled={syncStatus === "syncing"}
                 className="text-[#d8ccfb] hover:text-rs-gold transition-colors disabled:opacity-50"
                 title="Refresh data"

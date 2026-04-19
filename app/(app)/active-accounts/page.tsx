@@ -14,8 +14,6 @@ import { SearchBar } from "@/components/ui/SearchBar";
 import Link from "next/link";
 import { countsAsContact } from "@/lib/activity/helpers";
 import { getOrderStats } from "@/lib/orders/helpers";
-import { useOutreachStore } from "@/stores/useOutreachStore";
-import { mergeActivityLogs, outreachEntriesToActivityLogs } from "@/lib/activity/local";
 import { useUIStore } from "@/stores/useUIStore";
 import { getAccountHealth } from "@/lib/accounts/health";
 
@@ -32,14 +30,10 @@ function ActiveAccountsPageContent() {
   const [pendingDeleteIds, setPendingDeleteIds] = useState<string[]>([]);
   const { data, fetchAllTabs } = useSheetStore();
   const { entries: trash, removeFromTrash, clearTrash } = useTrashStore();
-  const outreachEntries = useOutreachStore((state) => state.entries);
   const showActionFeedback = useUIStore((state) => state.showActionFeedback);
   const showActionFeedbackWithAction = useUIStore((state) => state.showActionFeedbackWithAction);
   const deleteTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
-  const mergedLogs = useMemo(
-    () => mergeActivityLogs(logs, outreachEntriesToActivityLogs(outreachEntries)),
-    [logs, outreachEntries]
-  );
+  const mergedLogs = logs;
   const focus = searchParams.get("focus") ?? "";
 
   useEffect(() => {
@@ -142,6 +136,7 @@ function ActiveAccountsPageContent() {
         return item;
       })
     );
+    void fetchAllTabs({ silent: true });
     setEditingCell(null);
     showActionFeedback("Active account updated.", "success");
   };

@@ -174,7 +174,7 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
           if (!response.ok) throw new Error("Save failed");
           setSavedDetailDraft(detailDraft);
           setAutoSaveStatus("saved");
-          void fetchAllTabs({ silent: true });
+          void fetchAllTabs();
           if (autoSaveStatusTimer.current) clearTimeout(autoSaveStatusTimer.current);
           autoSaveStatusTimer.current = setTimeout(() => setAutoSaveStatus("idle"), 2500);
         } catch {

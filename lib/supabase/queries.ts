@@ -2,6 +2,36 @@ import { createServerClient } from "./server";
 import { ActivityLog } from "@/types/activity";
 import { OrderRecord } from "@/types/orders";
 
+function normalizeActivityLog(log: Partial<ActivityLog>): ActivityLog {
+  return {
+    id: log.id ?? "",
+    account_id: log.account_id ?? "",
+    tab: log.tab ?? "",
+    row_index: log.row_index ?? 0,
+    account_name: log.account_name ?? "",
+    action_type: (log.action_type ?? "note") as ActivityLog["action_type"],
+    note: log.note ?? null,
+    status_before: log.status_before ?? null,
+    status_after: log.status_after ?? null,
+    follow_up_date: log.follow_up_date ?? null,
+    notion_task_id: log.notion_task_id ?? null,
+    source: log.source ?? "manual",
+    created_at: log.created_at ?? new Date().toISOString(),
+    activity_kind:
+      log.activity_kind ??
+      ((log.action_type ?? "note") === "note" ? "note" : "outreach"),
+    counts_as_contact:
+      log.counts_as_contact ?? ((log.action_type ?? "note") !== "note"),
+    is_deleted: log.is_deleted ?? false,
+  };
+}
+
+function getMissingColumn(error: { code?: string; message?: string } | null) {
+  if (!error || error.code !== "PGRST204" || !error.message) return null;
+  const match = error.message.match(/Could not find the '([^']+)' column/);
+  return match?.[1] ?? null;
+}
+
 export async function insertActivityLog(entry: {
   account_id: string;
   tab: string;
@@ -19,15 +49,29 @@ export async function insertActivityLog(entry: {
   created_at?: string;
 }) {
   const supabase = createServerClient();
-  const payload = { ...entry, source: entry.source ?? "manual" };
-  const { data, error } = await supabase
-    .from("activity_logs")
-    .insert([payload])
-    .select()
-    .single();
+  let payload: Record<string, unknown> = { ...entry, source: entry.source ?? "manual" };
 
-  if (error) throw error;
-  return data as ActivityLog;
+  while (true) {
+    const { data, error } = await supabase
+      .from("activity_logs")
+      .insert([payload])
+      .select()
+      .single();
+
+    if (!error) {
+      return normalizeActivityLog(data as Partial<ActivityLog>);
+    }
+
+    const missingColumn = getMissingColumn(error);
+    if (missingColumn && missingColumn in payload) {
+      const nextPayload = { ...payload };
+      delete nextPayload[missingColumn];
+      payload = nextPayload;
+      continue;
+    }
+
+    throw error;
+  }
 }
 
 export async function getActivityLogs(accountId?: string): Promise<ActivityLog[]> {
@@ -44,7 +88,7 @@ export async function getActivityLogs(accountId?: string): Promise<ActivityLog[]
 
   const { data, error } = await query;
   if (error) throw error;
-  return (data ?? []) as ActivityLog[];
+  return (data ?? []).map((log) => normalizeActivityLog(log as Partial<ActivityLog>));
 }
 
 export async function getDeletedActivityLogs(accountId?: string): Promise<ActivityLog[]> {
@@ -61,7 +105,7 @@ export async function getDeletedActivityLogs(accountId?: string): Promise<Activi
 
   const { data, error } = await query;
   if (error) throw error;
-  return (data ?? []) as ActivityLog[];
+  return (data ?? []).map((log) => normalizeActivityLog(log as Partial<ActivityLog>));
 }
 
 export async function updateActivityLog(
@@ -77,7 +121,7 @@ export async function updateActivityLog(
     .single();
 
   if (error) throw error;
-  return data as ActivityLog;
+  return normalizeActivityLog(data as Partial<ActivityLog>);
 }
 
 export async function deleteActivityLog(id: string) {
@@ -109,7 +153,8 @@ export async function getLatestActivityByAccount(): Promise<Record<string, Activ
   if (error) throw error;
 
   const map: Record<string, ActivityLog> = {};
-  for (const log of (data ?? []) as ActivityLog[]) {
+  for (const rawLog of data ?? []) {
+    const log = normalizeActivityLog(rawLog as Partial<ActivityLog>);
     if (!map[log.account_id]) {
       map[log.account_id] = log;
     }

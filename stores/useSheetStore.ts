@@ -10,7 +10,7 @@ interface SheetStore {
   lastSynced: Date | null;
   syncStatus: SyncStatus;
   setData: (data: AllTabsData) => void;
-  fetchAllTabs: () => Promise<void>;
+  fetchAllTabs: (options?: { silent?: boolean }) => Promise<void>;
   updateAccountStatus: (
     tab: string,
     rowIndex: number,
@@ -27,16 +27,22 @@ export const useSheetStore = create<SheetStore>((set, get) => ({
 
   setData: (data) => set({ data, lastSynced: new Date(), syncStatus: "idle" }),
 
-  fetchAllTabs: async () => {
-    set({ syncStatus: "syncing" });
+  fetchAllTabs: async (options) => {
+    const silent = options?.silent ?? false;
+    if (!silent) {
+      set({ syncStatus: "syncing" });
+    }
+
     try {
-      const res = await fetch("/api/sheets");
+      const res = await fetch("/api/sheets", { cache: "no-store" });
       if (!res.ok) throw new Error("Failed to fetch sheets");
       const data = await res.json();
       set({ data, lastSynced: new Date(), syncStatus: "idle" });
     } catch {
-      set({ syncStatus: "error" });
-      useUIStore.getState().showActionFeedback("Couldn’t refresh data from Google Sheets.", "error");
+      if (!silent) {
+        set({ syncStatus: "error" });
+        useUIStore.getState().showActionFeedback("Couldn’t refresh data from Google Sheets.", "error");
+      }
     }
   },
 

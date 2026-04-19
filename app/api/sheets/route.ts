@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { getAllTabs } from "@/lib/sheets/read";
 import { AllTabsData } from "@/types/accounts";
 
-const CACHE_TTL_MS = 3 * 60 * 1000; // 3 minutes
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 const EMPTY_DATA: AllTabsData = {
   restaurants: [],
@@ -12,25 +13,20 @@ const EMPTY_DATA: AllTabsData = {
   activeAccounts: [],
 };
 
-let cache: { data: AllTabsData; ts: number } | null = null;
+const NO_STORE_HEADERS = {
+  "Cache-Control": "no-store, max-age=0",
+};
 
 export async function GET() {
   if (!process.env.GOOGLE_SERVICE_ACCOUNT_KEY || !process.env.GOOGLE_SHEET_ID) {
-    return NextResponse.json(EMPTY_DATA);
-  }
-
-  if (cache && Date.now() - cache.ts < CACHE_TTL_MS) {
-    return NextResponse.json(cache.data);
+    return NextResponse.json(EMPTY_DATA, { headers: NO_STORE_HEADERS });
   }
 
   try {
     const data = await getAllTabs();
-    cache = { data, ts: Date.now() };
-    return NextResponse.json(data);
+    return NextResponse.json(data, { headers: NO_STORE_HEADERS });
   } catch (error) {
     console.error("Sheets read error:", error);
-    // Serve stale cache on error rather than returning empty data
-    if (cache) return NextResponse.json(cache.data);
-    return NextResponse.json(EMPTY_DATA);
+    return NextResponse.json(EMPTY_DATA, { headers: NO_STORE_HEADERS });
   }
 }

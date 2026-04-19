@@ -6,13 +6,26 @@ import { NavBar } from "@/components/layout/NavBar";
 import { useSheetStore } from "@/stores/useSheetStore";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
-  const { fetchAllTabs, data } = useSheetStore();
+  const fetchAllTabs = useSheetStore((state) => state.fetchAllTabs);
 
   useEffect(() => {
-    if (!data) {
-      fetchAllTabs();
-    }
-  }, []);
+    void fetchAllTabs();
+
+    const refreshSilently = () => {
+      if (document.visibilityState !== "visible") return;
+      void fetchAllTabs({ silent: true });
+    };
+
+    const interval = window.setInterval(refreshSilently, 30000);
+    window.addEventListener("focus", refreshSilently);
+    document.addEventListener("visibilitychange", refreshSilently);
+
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refreshSilently);
+      document.removeEventListener("visibilitychange", refreshSilently);
+    };
+  }, [fetchAllTabs]);
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-rs-bg flex flex-col">

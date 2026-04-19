@@ -18,7 +18,7 @@ export default function SettingsPage() {
           Manually refresh all data from the Google Sheet.
         </p>
         <Button
-          onClick={fetchAllTabs}
+          onClick={() => void fetchAllTabs()}
           disabled={syncStatus === "syncing"}
         >
           {syncStatus === "syncing" ? "Syncing..." : "Sync Now"}

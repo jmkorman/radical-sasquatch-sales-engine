@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { ReactNode, useEffect, useMemo, useState } from "react";
 import { useSheetStore } from "@/stores/useSheetStore";
-import { useOutreachStore } from "@/stores/useOutreachStore";
 import { HitList } from "@/components/features/dashboard/HitList";
 import { FollowUpQueue, buildFollowUpQueue } from "@/components/features/dashboard/FollowUpQueue";
 import { RecentActivity } from "@/components/features/dashboard/RecentActivity";
@@ -15,7 +14,6 @@ import { OrderRecord } from "@/types/orders";
 import { Spinner } from "@/components/ui/Spinner";
 import { Card } from "@/components/ui/Card";
 import { formatDateShort, daysSince } from "@/lib/utils/dates";
-import { mergeActivityLogs, outreachEntriesToActivityLogs } from "@/lib/activity/local";
 import { buildLatestContactMapByAccount, getAllAccounts } from "@/lib/activity/timeline";
 import { getAccountPrimaryId } from "@/lib/accounts/identity";
 import { getAccountHealth } from "@/lib/accounts/health";
@@ -26,19 +24,12 @@ function orderPotential(value: string) {
 
 export default function DashboardPage() {
   const { data } = useSheetStore();
-  const outreachStore = useOutreachStore();
   const [hitList, setHitList] = useState<HitListItem[]>([]);
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [serverLogs, setServerLogs] = useState<ActivityLog[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const localLogs = useMemo<ActivityLog[]>(() => {
-    return outreachEntriesToActivityLogs(outreachStore.entries);
-  }, [outreachStore.entries]);
-
-  const mergedLogs = useMemo<ActivityLog[]>(() => {
-    return mergeActivityLogs(localLogs, serverLogs);
-  }, [localLogs, serverLogs]);
+  const mergedLogs = serverLogs;
 
   const contactActivityMap = useMemo<Record<string, ActivityLog>>(() => {
     if (!data) return {};
@@ -59,16 +50,16 @@ export default function DashboardPage() {
         const orderData: OrderRecord[] = orderRes.ok ? await orderRes.json() : [];
         setServerLogs(activityData);
         setOrders(orderData);
-        setHitList(buildHitList(currentData, mergeActivityLogs(localLogs, activityData)));
+        setHitList(buildHitList(currentData, activityData));
       } catch {
-        setHitList(buildHitList(currentData, localLogs));
+        setHitList(buildHitList(currentData, []));
       } finally {
         setLoading(false);
       }
     }
 
     loadDashboardData();
-  }, [data, localLogs]);
+  }, [data]);
 
   if (!data) {
     return (
