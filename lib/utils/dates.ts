@@ -4,6 +4,13 @@ export function parseAppDate(dateStr: string): Date | null {
   const trimmed = dateStr.trim();
   if (!trimmed) return null;
 
+  // Handle YYYY-MM-DD as local time (new Date("2026-04-22") parses as UTC midnight
+  // which shifts to the prior day in timezones west of UTC)
+  const isoMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (isoMatch) {
+    return new Date(parseInt(isoMatch[1]), parseInt(isoMatch[2]) - 1, parseInt(isoMatch[3]));
+  }
+
   const native = new Date(trimmed);
   if (!isNaN(native.getTime())) return native;
 

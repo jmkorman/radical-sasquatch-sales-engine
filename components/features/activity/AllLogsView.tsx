@@ -52,6 +52,16 @@ export function AllLogsView() {
     }
   }
 
+  async function handleEditFollowUp(log: ActivityLog, newDate: string) {
+    const res = await fetch("/api/activity", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: log.id, follow_up_date: newDate }),
+    });
+    if (!res.ok) throw new Error("Failed to update follow-up date");
+    await loadLogs();
+  }
+
   async function loadTrashLogs() {
     setTrashLoading(true);
     try {
@@ -195,6 +205,7 @@ export function AllLogsView() {
             logs={filteredLogs}
             showDeleted={showTrash}
             onServerLogsChanged={showTrash ? loadTrashLogs : loadLogs}
+            onEditFollowUp={handleEditFollowUp}
           />
         )}
       </Card>

@@ -442,6 +442,19 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
     }
   };
 
+  const editScheduledFollowUp = async (log: ActivityLog, newDate: string) => {
+    const response = await fetch("/api/activity", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: log.id, follow_up_date: newDate }),
+    });
+    if (!response.ok) throw new Error("Failed to update follow-up");
+    const updatedLog: ActivityLog = await response.json();
+    setServerJournalLogs((existing) =>
+      existing.map((entry) => (entry.id === updatedLog.id ? updatedLog : entry))
+    );
+  };
+
   const handleSaveQuickNote = async () => {
     const note = formatActivityNote({
       summary: quickSummary,
@@ -893,6 +906,7 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
             <ActivityLogList
               logs={visibleJournalEntries}
               onClearFollowUp={clearScheduledFollowUp}
+              onEditFollowUp={editScheduledFollowUp}
               pendingFollowUpId={updatingFollowUpId}
               onServerLogsChanged={refreshServerJournalLogs}
             />
