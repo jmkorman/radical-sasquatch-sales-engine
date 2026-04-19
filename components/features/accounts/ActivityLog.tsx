@@ -20,12 +20,14 @@ export function ActivityLogList({
   logs,
   showDeleted = false,
   onClearFollowUp,
+  onEditFollowUp,
   pendingFollowUpId = null,
   onServerLogsChanged,
 }: {
   logs: ActivityLogType[];
   showDeleted?: boolean;
   onClearFollowUp?: (log: ActivityLogType) => void;
+  onEditFollowUp?: (log: ActivityLogType, newDate: string) => Promise<void> | void;
   pendingFollowUpId?: string | null;
   onServerLogsChanged?: () => Promise<void> | void;
 }) {
@@ -33,6 +35,8 @@ export function ActivityLogList({
   const showActionFeedbackWithAction = useUIStore((state) => state.showActionFeedbackWithAction);
   const showActionFeedback = useUIStore((state) => state.showActionFeedback);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [editingFollowUpId, setEditingFollowUpId] = useState<string | null>(null);
+  const [editingFollowUpDate, setEditingFollowUpDate] = useState<string>("");
   const deletedIds = new Set(deletedLogs.map((entry) => entry.id));
   const visibleLogs = showDeleted
     ? logs
@@ -131,10 +135,44 @@ export function ActivityLogList({
                       {log.status_before || "No Status"} to {log.status_after}
                     </span>
                   )}
-                  {log.follow_up_date && (
-                    <span className="rounded-full border border-rs-punch/40 bg-rs-punch/10 px-2 py-0.5 text-[11px] font-medium text-[#ffd6e8]">
-                      Follow up {formatDate(log.follow_up_date)}
+                  {log.follow_up_date && editingFollowUpId !== log.id && (
+                    <span className="rounded-full border border-rs-punch/40 bg-rs-punch/10 px-2 py-0.5 text-[11px] font-medium text-[#ffd6e8] cursor-pointer hover:opacity-80 transition-opacity" onClick={() => {
+                      setEditingFollowUpId(log.id);
+                      setEditingFollowUpDate(log.follow_up_date || "");
+                    }}>
+                      Follow up {formatDate(log.follow_up_date)} ✎
                     </span>
+                  )}
+                  {editingFollowUpId === log.id && (
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="date"
+                        value={editingFollowUpDate}
+                        onChange={(e) => setEditingFollowUpDate(e.target.value)}
+                        className="rounded border border-rs-punch/50 bg-rs-bg/50 px-2 py-1 text-xs text-white"
+                      />
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="px-2 py-1 text-xs"
+                        onClick={async () => {
+                          if (onEditFollowUp && editingFollowUpDate) {
+                            await onEditFollowUp(log, editingFollowUpDate);
+                            setEditingFollowUpId(null);
+                          }
+                        }}
+                      >
+                        Save
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="px-2 py-1 text-xs"
+                        onClick={() => setEditingFollowUpId(null)}
+                      >
+                        Cancel
+                      </Button>
+                    </div>
                   )}
                 </div>
 
