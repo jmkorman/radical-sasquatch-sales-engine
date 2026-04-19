@@ -25,6 +25,7 @@ import {
   getAllPipelineAccounts,
   PipelineTabName,
 } from "@/lib/pipeline/urgency";
+import { getAccountStableId, getLogStableId } from "@/lib/accounts/identity";
 import { StatusPill, StatusDot } from "./StatusIndicators";
 import { STATUS_VALUES } from "@/lib/utils/constants";
 
@@ -75,6 +76,17 @@ export function CommandTable({
 
   const all = useMemo(() => getForPipelineTab(data, activeTab), [data, activeTab]);
 
+  // Build a search index: stableAccountId → combined note text from all logs
+  const notesByAccountId = useMemo(() => {
+    const map = new Map<string, string>();
+    serverLogs.forEach((log) => {
+      if (!log.note) return;
+      const key = getLogStableId(log);
+      map.set(key, (map.get(key) ?? "") + " " + log.note);
+    });
+    return map;
+  }, [serverLogs]);
+
   const statusCounts = useMemo(() => {
     const c: Record<string, number> = {};
     all.forEach((a) => { const s = a.status || ""; c[s] = (c[s] || 0) + 1; });
@@ -85,12 +97,17 @@ export function CommandTable({
     let list = all;
     if (search) {
       const q = search.toLowerCase();
-      list = list.filter(
-        (a) =>
-          a.account.toLowerCase().includes(q) ||
-          (a.contactName || "").toLowerCase().includes(q) ||
-          ("location" in a && ((a.location as string) || "").toLowerCase().includes(q))
-      );
+      list = list.filter((a) => {
+        if (a.account.toLowerCase().includes(q)) return true;
+        if ((a.contactName || "").toLowerCase().includes(q)) return true;
+        if ("location" in a && ((a.location as string) || "").toLowerCase().includes(q)) return true;
+        // Search sheet notes field
+        if ((a.notes || "").toLowerCase().includes(q)) return true;
+        // Search activity log notes
+        const logNotes = notesByAccountId.get(getAccountStableId(a)) ?? "";
+        if (logNotes.toLowerCase().includes(q)) return true;
+        return false;
+      });
     }
     if (statusFilter) list = list.filter((a) => a.status === statusFilter);
     return [...list].sort((a, b) => {
@@ -106,7 +123,7 @@ export function CommandTable({
         );
       return urgencyScore(b) - urgencyScore(a); // urgency default
     });
-  }, [all, search, statusFilter, sortBy]);
+  }, [all, search, statusFilter, sortBy, notesByAccountId]);
 
   const rowPad =
     tweaks.density === "compact" ? "8px 14px" : tweaks.density === "roomy" ? "18px 16px" : "12px 16px";
