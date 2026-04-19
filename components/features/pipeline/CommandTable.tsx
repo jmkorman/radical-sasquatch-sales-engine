@@ -17,7 +17,6 @@ import {
   STATUS_PALETTE,
   STATUS_ORDER,
   urgencyScore,
-  parseDollarsPipeline,
   formatContactPipeline,
   tempLabelPipeline,
   daysSincePipeline,
@@ -602,7 +601,6 @@ function TableRow({
   serverLogs: ActivityLog[];
 }) {
   const touch = formatContactPipeline(account.contactDate);
-  const temp = tempLabelPipeline(touch.days);
   const c = STATUS_PALETTE[account.status] ?? STATUS_PALETTE[""];
   const urgencyEnabled = tweaks.urgency !== "off";
   const loud = tweaks.urgency === "loud";
