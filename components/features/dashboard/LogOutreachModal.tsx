@@ -9,7 +9,6 @@ import { Textarea } from "@/components/ui/Textarea";
 import { Input } from "@/components/ui/Input";
 import { STATUS_VALUES } from "@/lib/utils/constants";
 import { formatActivityNote } from "@/lib/activity/notes";
-import { getDateISO } from "@/lib/utils/dates";
 
 interface LogOutreachModalProps {
   account: AnyAccount;
@@ -143,7 +142,7 @@ export function LogOutreachModal({
 function DatePicker({ value, onChange }: { value: string; onChange: (date: string) => void }) {
   const today = new Date();
   const [month, setMonth] = useState(today.getMonth());
-  const [year, setYear] = useState(today.getFullYear());
+  const [year] = useState(today.getFullYear());
 
   const daysInMonth = (m: number, y: number) => new Date(y, m + 1, 0).getDate();
   const firstDay = new Date(year, month, 1).getDay();
