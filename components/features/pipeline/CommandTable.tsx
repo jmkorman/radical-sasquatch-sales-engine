@@ -602,7 +602,6 @@ function TableRow({
 }) {
   const touch = formatContactPipeline(account.contactDate);
   const c = STATUS_PALETTE[account.status] ?? STATUS_PALETTE[""];
-  const urgencyEnabled = tweaks.urgency !== "off";
   const loud = tweaks.urgency === "loud";
 
   // Latest note: from activity log or sheet
