@@ -680,28 +680,7 @@ function TableRow({
 
       {/* Last touch */}
       <div style={{ padding: rowPad }}>
-        <div
-          style={{
-            fontSize: 13,
-            fontWeight: 600,
-            color: (() => {
-              const d = touch.days;
-              if (d === null) return "#8c7fbd";
-              if (d <= 2)  return "#4ade80";
-              if (d <= 7)  return "#86efac";
-              if (d <= 14) return "#fbbf24";
-              return "#ff7c70";
-            })(),
-            fontFamily: "'Space Grotesk', sans-serif",
-          }}
-        >
-          {touch.label}
-        </div>
-        {urgencyEnabled && (
-          <div style={{ marginTop: 4 }}>
-            <TempBar days={touch.days} loud={loud} />
-          </div>
-        )}
+        <TempBarWithLabel days={touch.days} label={touch.label} loud={loud} />
       </div>
 
       {/* Note */}
@@ -719,6 +698,49 @@ function TableRow({
       >
         {latestNote || <span style={{ color: "#5a4a8a" }}>—</span>}
       </div>
+    </div>
+  );
+}
+
+function TempBarWithLabel({ days, label, loud }: { days: number | null; label: string; loud: boolean }) {
+  // Color bracket based on age
+  const color =
+    days === null ? "#8c7fbd"
+    : days <= 2   ? "#4ade80"
+    : days <= 7   ? "#86efac"
+    : days <= 14  ? "#fbbf24"
+    : "#ff7c70";
+  // Bar starts full when fresh, depletes as days increase (21d = empty)
+  const filled = days === null ? 0 : Math.max(0, Math.min(10, Math.round(10 - (days / 21) * 10)));
+
+  return (
+    <div>
+      <div
+        style={{
+          fontSize: 13,
+          fontWeight: 600,
+          color,
+          fontFamily: "'Space Grotesk', sans-serif",
+        }}
+      >
+        {label}
+      </div>
+      {(filled > 0 || days !== null) && (
+        <div style={{ marginTop: 4, display: "flex", gap: 2, alignItems: "center" }}>
+          {[...Array(10)].map((_, i) => (
+            <span
+              key={i}
+              style={{
+                width: loud ? 6 : 4,
+                height: loud ? 6 : 4,
+                borderRadius: 1,
+                background: i < filled ? color : "rgba(73,48,140,0.4)",
+                boxShadow: loud && i < filled ? `0 0 4px ${color}` : "none",
+              }}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
