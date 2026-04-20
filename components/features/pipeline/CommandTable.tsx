@@ -11,7 +11,7 @@ import { useUIStore } from "@/stores/useUIStore";
 import { parseActivityNote } from "@/lib/activity/notes";
 import { getLogsForAccount } from "@/lib/activity/timeline";
 import { persistActivityEntry } from "@/lib/activity/persist";
-import { todayISO, getContactAgeTone } from "@/lib/utils/dates";
+import { todayISO } from "@/lib/utils/dates";
 import {
   PIPELINE_STATUSES,
   STATUS_PALETTE,
@@ -685,12 +685,12 @@ function TableRow({
             fontSize: 13,
             fontWeight: 600,
             color: (() => {
-              const tone = getContactAgeTone(account.contactDate ?? "");
-              if (tone === "fresh") return "#64f5ea";
-              if (tone === "week") return "#fbbf24";
-              if (tone === "twoWeeks") return "#f97316";
-              if (tone === "month") return "#ff7c70";
-              return "#8c7fbd";
+              const d = touch.days;
+              if (d === null) return "#8c7fbd";
+              if (d <= 2)  return "#4ade80";
+              if (d <= 7)  return "#86efac";
+              if (d <= 14) return "#fbbf24";
+              return "#ff7c70";
             })(),
             fontFamily: "'Space Grotesk', sans-serif",
           }}
@@ -724,10 +724,15 @@ function TableRow({
 }
 
 function TempBar({ days, loud }: { days: number | null; loud: boolean }) {
-  const filled = days === null ? 10 : Math.min(10, Math.round((days / 21) * 10));
-  const hot = filled <= 2;
-  const warm = filled <= 5;
-  const color = hot ? "#64f5ea" : warm ? "#ffb321" : "#ff7c70";
+  // Color bracket based on age
+  const color =
+    days === null ? "#8c7fbd"
+    : days <= 2   ? "#4ade80"
+    : days <= 7   ? "#86efac"
+    : days <= 14  ? "#fbbf24"
+    : "#ff7c70";
+  // Bar starts full when fresh, depletes as days increase (21d = empty)
+  const filled = days === null ? 0 : Math.max(0, Math.min(10, Math.round(10 - (days / 21) * 10)));
   return (
     <div style={{ display: "flex", gap: 2, alignItems: "center" }}>
       {[...Array(10)].map((_, i) => (
