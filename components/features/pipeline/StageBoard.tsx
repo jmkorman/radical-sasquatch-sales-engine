@@ -68,7 +68,7 @@ export function StageBoard({
 
       return {
         account,
-        status: latestStatus || account.status || "Identified",
+        status: account.status || latestStatus || "Identified",
         lastContactDate: latestContact?.created_at || account.contactDate,
       };
     });
