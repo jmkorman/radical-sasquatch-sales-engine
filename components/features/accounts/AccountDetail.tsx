@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { AnyAccount } from "@/types/accounts";
 import { ActivityLog } from "@/types/activity";
-import { OrderRecord } from "@/types/orders";
+import { OrderRecord, ORDER_PRIORITIES, ORDER_STATUSES } from "@/types/orders";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -14,7 +15,7 @@ import { ActivityLogList } from "./ActivityLog";
 import { QuickActions } from "./QuickActions";
 import { LogOutreachModal } from "@/components/features/dashboard/LogOutreachModal";
 import { todayISO, formatDate, formatDateShort } from "@/lib/utils/dates";
-import { formatActivityNote } from "@/lib/activity/notes";
+import { formatActivityNote, parseActivityNote } from "@/lib/activity/notes";
 import { useTrashStore } from "@/stores/useTrashStore";
 import { countsAsContact } from "@/lib/activity/helpers";
 import { STATUS_VALUES } from "@/lib/utils/constants";
@@ -34,6 +35,17 @@ interface AccountDetailProps {
   logs: ActivityLog[];
 }
 
+interface GmailThread {
+  id: string;
+  subject: string;
+  snippet: string;
+  from: string;
+  to: string;
+  latestMessageDate: string;
+  messageCount: number;
+  unread: boolean;
+}
+
 export function AccountDetail({ account, logs }: AccountDetailProps) {
   const deletedLogs = useTrashStore((state) => state.deletedLogs);
   const { fetchAllTabs } = useSheetStore();
@@ -42,6 +54,7 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
   const accountId = getAccountPrimaryId(account);
 
   const [showLogModal, setShowLogModal] = useState(false);
+  const [editingOutreachLog, setEditingOutreachLog] = useState<ActivityLog | null>(null);
   const [detailDraft, setDetailDraft] = useState({
     accountName: account.account,
     contactName: "contactName" in account ? account.contactName : "",
@@ -82,10 +95,20 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [loadingOrders, setLoadingOrders] = useState(true);
   const [loggingOrder, setLoggingOrder] = useState(false);
+  const [gmailThreads, setGmailThreads] = useState<GmailThread[]>([]);
+  const [gmailConfigured, setGmailConfigured] = useState<boolean | null>(null);
+  const [loadingGmail, setLoadingGmail] = useState(false);
   const [orderDraft, setOrderDraft] = useState({
+    orderName: "",
     orderDate: todayISO(),
+    dueDate: "",
+    fulfillmentDate: "",
+    status: "New",
+    priority: "Normal",
+    owner: "",
+    details: "",
+    productionNotes: "",
     amount: "",
-    notes: "",
   });
 
   useEffect(() => {
@@ -104,6 +127,42 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
 
     loadOrders();
   }, [accountId]);
+
+  useEffect(() => {
+    const email = detailDraft.email.trim();
+    if (!email) {
+      setGmailThreads([]);
+      setGmailConfigured(null);
+      return;
+    }
+
+    let canceled = false;
+    async function loadGmailThreads() {
+      setLoadingGmail(true);
+      try {
+        const response = await fetch(`/api/gmail/threads?email=${encodeURIComponent(email)}`, {
+          cache: "no-store",
+        });
+        if (!response.ok) throw new Error("Failed to load Gmail threads");
+        const payload: { threads?: GmailThread[]; configured?: boolean } = await response.json();
+        if (canceled) return;
+        setGmailThreads(payload.threads ?? []);
+        setGmailConfigured(payload.configured ?? false);
+      } catch {
+        if (!canceled) {
+          setGmailThreads([]);
+          setGmailConfigured(false);
+        }
+      } finally {
+        if (!canceled) setLoadingGmail(false);
+      }
+    }
+
+    void loadGmailThreads();
+    return () => {
+      canceled = true;
+    };
+  }, [detailDraft.email]);
 
   useEffect(() => {
     setServerJournalLogs(getLogsForAccount(logs, account));
@@ -212,7 +271,9 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
   const journalCountLabel = `${visibleJournalEntries.length} ${visibleJournalEntries.length === 1 ? "entry" : "entries"}`;
   const orderStats = useMemo(() => getOrderStats(orders), [orders]);
   const mostRecentPurchase = orderStats.latest
-    ? `$${orderStats.latest.amount.toLocaleString("en-US", { maximumFractionDigits: 0 })} on ${formatDateShort(orderStats.latest.order_date)}`
+    ? orderStats.latest.amount
+      ? `$${orderStats.latest.amount.toLocaleString("en-US", { maximumFractionDigits: 0 })} on ${formatDateShort(orderStats.latest.order_date)}`
+      : `${orderStats.latest.order_name || "Order"} · ${orderStats.latest.status}`
     : ("order" in account ? detailDraft.order || "No order logged" : "Tracked outside Active Accounts");
 
   const timelineStats = useMemo(
@@ -279,6 +340,7 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
     source?: string;
     activityKind?: "outreach" | "note" | "research" | "order";
     countsAsContact?: boolean;
+    nextActionType?: string | null;
   }) => {
     const statusAfter = entry.statusAfter ?? currentStatus;
     const log = await persistActivityEntry({
@@ -291,6 +353,7 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
       source: entry.source ?? (entry.actionType === "note" ? "internal" : "manual"),
       activityKind: entry.activityKind ?? (entry.actionType === "note" ? "note" : "outreach"),
       countsAsContact: entry.countsAsContact ?? (entry.actionType !== "note"),
+      nextActionType: entry.nextActionType ?? null,
     });
 
     setServerJournalLogs((existing) => mergeActivityLogs([log], existing));
@@ -314,12 +377,23 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
     statusAfter: string;
     note: string;
     followUpDate: string;
+    nextActionType: string;
   }) => {
     try {
       await addJournalEntry(data);
     } catch {
       showActionFeedback("Couldn’t save that outreach entry to the online timeline.", "error");
       return;
+    }
+
+    // Auto-clear any pending follow-up from previous logs
+    const pendingFollowUp = getScheduledFollowUpLogForAccount(serverJournalLogs, account);
+    if (pendingFollowUp) {
+      void fetch("/api/activity", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: pendingFollowUp.id, follow_up_date: null }),
+      });
     }
 
     try {
@@ -352,19 +426,44 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
       showActionFeedback("Outreach was logged, but the account update failed.", "error");
     }
 
-    if (data.followUpDate) {
-      try {
-        await fetch("/api/notion/tasks", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            accountName: account.account,
-            contactName: primaryContact,
-            followUpDate: data.followUpDate,
-            accountUrl: window.location.href,
-          }),
-        });
-      } catch { /* non-blocking */ }
+  };
+
+  const handleUpdateOutreachLog = async (data: {
+    actionType: string;
+    statusAfter: string;
+    note: string;
+    followUpDate: string;
+    nextActionType: string;
+  }) => {
+    if (!editingOutreachLog) return;
+
+    try {
+      const response = await fetch("/api/activity", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: editingOutreachLog.id,
+          action_type: data.actionType,
+          note: data.note,
+          status_before: editingOutreachLog.status_before,
+          status_after: data.statusAfter,
+          follow_up_date: data.followUpDate || null,
+          next_action_type: data.nextActionType || null,
+          activity_kind: "outreach",
+          counts_as_contact: true,
+        }),
+      });
+      if (!response.ok) throw new Error("Failed to update outreach");
+
+      const updatedLog: ActivityLog = await response.json();
+      setServerJournalLogs((existing) =>
+        existing.map((entry) => (entry.id === updatedLog.id ? updatedLog : entry))
+      );
+      setEditingOutreachLog(null);
+      showActionFeedback("Outreach updated.", "success");
+    } catch {
+      showActionFeedback("Couldn’t update that outreach entry.", "error");
+      throw new Error("Failed to update outreach");
     }
   };
 
@@ -484,8 +583,8 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
   };
 
   const handleLogOrder = async () => {
-    const amount = parseFloat(orderDraft.amount);
-    if (!Number.isFinite(amount)) return;
+    if (!orderDraft.orderName.trim()) return;
+    const amount = orderDraft.amount ? parseFloat(orderDraft.amount) : 0;
 
     setLoggingOrder(true);
     try {
@@ -496,9 +595,22 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
           account_id: accountId,
           account_name: account.account,
           tab: account._tabSlug,
+          row_index: account._rowIndex,
+          account_type: account.type,
+          contact_name: account.contactName,
+          phone: account.phone,
+          email: account.email,
+          order_name: orderDraft.orderName,
           order_date: orderDraft.orderDate,
-          amount,
-          notes: orderDraft.notes || null,
+          due_date: orderDraft.dueDate || null,
+          fulfillment_date: orderDraft.fulfillmentDate || null,
+          status: orderDraft.status,
+          priority: orderDraft.priority,
+          owner: orderDraft.owner || null,
+          details: orderDraft.details || null,
+          production_notes: orderDraft.productionNotes || null,
+          amount: Number.isFinite(amount) ? amount : 0,
+          notes: orderDraft.productionNotes || null,
         }),
       });
 
@@ -540,9 +652,16 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
         order: `$${amount.toFixed(0)}`,
       }));
       setOrderDraft({
+        orderName: "",
         orderDate: todayISO(),
+        dueDate: "",
+        fulfillmentDate: "",
+        status: "New",
+        priority: "Normal",
+        owner: "",
+        details: "",
+        productionNotes: "",
         amount: "",
-        notes: "",
       });
       await fetchAllTabs();
       showActionFeedback("Order logged.", "success");
@@ -744,6 +863,63 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
           </div>
 
           <Card>
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <div className="text-[11px] uppercase tracking-[0.3em] text-[#af9fe6]">Gmail Threads</div>
+                  <div className="mt-1 text-sm text-[#d8ccfb]">
+                    Read-only email history matched to {detailDraft.email || "this account's email"}.
+                  </div>
+                </div>
+                <Link href="/settings" className="text-xs font-semibold uppercase tracking-[0.16em] text-rs-gold hover:text-rs-cream">
+                  Gmail Settings
+                </Link>
+              </div>
+
+              {!detailDraft.email ? (
+                <div className="rounded-xl border border-rs-border/60 bg-black/10 px-3 py-3 text-sm text-[#d8ccfb]">
+                  Add an email address to this account to match Gmail threads.
+                </div>
+              ) : loadingGmail ? (
+                <div className="text-sm text-[#af9fe6]">Loading Gmail threads...</div>
+              ) : gmailConfigured === false ? (
+                <div className="rounded-xl border border-rs-border/60 bg-black/10 px-3 py-3 text-sm text-[#d8ccfb]">
+                  Gmail is not connected yet. Connect read-only Gmail access in Settings to show account emails here.
+                </div>
+              ) : gmailThreads.length === 0 ? (
+                <div className="rounded-xl border border-rs-border/60 bg-black/10 px-3 py-3 text-sm text-[#d8ccfb]">
+                  No Gmail threads found for this email yet.
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {gmailThreads.slice(0, 5).map((thread) => (
+                    <div key={thread.id} className="rounded-xl border border-rs-border/60 bg-black/10 px-3 py-3 text-sm">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="truncate font-semibold text-rs-cream">
+                            {thread.unread && <span className="mr-2 text-rs-gold">Unread</span>}
+                            {thread.subject}
+                          </div>
+                          <div className="mt-1 truncate text-xs text-[#af9fe6]">
+                            {thread.from || thread.to}
+                          </div>
+                        </div>
+                        <div className="shrink-0 text-right text-xs text-[#8c7fbd]">
+                          <div>{formatDate(thread.latestMessageDate)}</div>
+                          <div>{thread.messageCount} msg{thread.messageCount === 1 ? "" : "s"}</div>
+                        </div>
+                      </div>
+                      {thread.snippet && (
+                        <div className="mt-2 line-clamp-2 text-[#d8ccfb]">{thread.snippet}</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </Card>
+
+          <Card>
               <div className="space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
@@ -795,11 +971,17 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
               <div>
                 <div className="text-[11px] uppercase tracking-[0.3em] text-[#af9fe6]">Order Log</div>
                 <div className="mt-1 text-sm text-[#d8ccfb]">
-                  Track order history here. The latest order rolls up into Active Accounts.
+                  Create production-tracked orders here. New orders roll into the Orders board and Active Accounts.
                 </div>
               </div>
 
-              <div className="grid gap-3 md:grid-cols-[160px_160px_minmax(0,1fr)]">
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                <Input
+                  label="Order Name"
+                  value={orderDraft.orderName}
+                  onChange={(e) => setOrderDraft((prev) => ({ ...prev, orderName: e.target.value }))}
+                  placeholder="Patio restock, event order, opening order"
+                />
                 <Input
                   label="Order Date"
                   type="date"
@@ -807,23 +989,61 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
                   onChange={(e) => setOrderDraft((prev) => ({ ...prev, orderDate: e.target.value }))}
                 />
                 <Input
-                  label="Amount"
+                  label="Due Date"
+                  type="date"
+                  value={orderDraft.dueDate}
+                  onChange={(e) => setOrderDraft((prev) => ({ ...prev, dueDate: e.target.value }))}
+                />
+                <Input
+                  label="Delivery/Pickup"
+                  type="date"
+                  value={orderDraft.fulfillmentDate}
+                  onChange={(e) => setOrderDraft((prev) => ({ ...prev, fulfillmentDate: e.target.value }))}
+                />
+                <Select
+                  label="Status"
+                  value={orderDraft.status}
+                  onChange={(e) => setOrderDraft((prev) => ({ ...prev, status: e.target.value }))}
+                  options={ORDER_STATUSES.map((status) => ({ value: status, label: status }))}
+                />
+                <Select
+                  label="Priority"
+                  value={orderDraft.priority}
+                  onChange={(e) => setOrderDraft((prev) => ({ ...prev, priority: e.target.value }))}
+                  options={ORDER_PRIORITIES.map((priority) => ({ value: priority, label: priority }))}
+                />
+                <Input
+                  label="Owner"
+                  value={orderDraft.owner}
+                  onChange={(e) => setOrderDraft((prev) => ({ ...prev, owner: e.target.value }))}
+                  placeholder="Production lead"
+                />
+                <Input
+                  label="Optional Amount"
                   inputMode="decimal"
                   value={orderDraft.amount}
                   onChange={(e) => setOrderDraft((prev) => ({ ...prev, amount: e.target.value }))}
-                  placeholder="250"
+                  placeholder="Not required"
                 />
-                <Input
-                  label="Notes"
-                  value={orderDraft.notes}
-                  onChange={(e) => setOrderDraft((prev) => ({ ...prev, notes: e.target.value }))}
-                  placeholder="Restock for patio weekend, first reorder, test run"
+                <Textarea
+                  label="Order Details"
+                  className="xl:col-span-2"
+                  value={orderDraft.details}
+                  onChange={(e) => setOrderDraft((prev) => ({ ...prev, details: e.target.value }))}
+                  placeholder="Items, counts, packaging, delivery requirements"
+                />
+                <Textarea
+                  label="Production Notes"
+                  className="xl:col-span-2"
+                  value={orderDraft.productionNotes}
+                  onChange={(e) => setOrderDraft((prev) => ({ ...prev, productionNotes: e.target.value }))}
+                  placeholder="Prep constraints, handoff notes, anything production should know"
                 />
               </div>
 
               <div className="flex justify-end">
-                <Button onClick={handleLogOrder} disabled={loggingOrder || !orderDraft.amount.trim()}>
-                  {loggingOrder ? "Logging..." : "Log Order"}
+                <Button onClick={handleLogOrder} disabled={loggingOrder || !orderDraft.orderName.trim()}>
+                  {loggingOrder ? "Creating..." : "Create Order"}
                 </Button>
               </div>
 
@@ -841,13 +1061,28 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
                       className="rounded-xl border border-rs-border/60 bg-black/10 px-3 py-3 text-sm"
                     >
                       <div className="flex items-center justify-between gap-3">
-                        <div className="font-semibold text-rs-cream">
-                          ${order.amount.toLocaleString("en-US", { maximumFractionDigits: 0 })}
-                        </div>
+                        <div className="font-semibold text-rs-cream">{order.order_name || "Untitled order"}</div>
                         <div className="text-xs text-[#af9fe6]">{formatDate(order.order_date)}</div>
                       </div>
-                      {order.notes && (
-                        <div className="mt-2 text-[#d8ccfb]">{order.notes}</div>
+                      <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                        <span className="rounded-full border border-rs-border/60 px-2 py-0.5 text-[#d8ccfb]">
+                          {order.status}
+                        </span>
+                        {order.due_date && (
+                          <span className="rounded-full border border-rs-border/60 px-2 py-0.5 text-[#d8ccfb]">
+                            Due {formatDate(order.due_date)}
+                          </span>
+                        )}
+                        {order.priority && (
+                          <span className="rounded-full border border-rs-border/60 px-2 py-0.5 text-[#d8ccfb]">
+                            {order.priority}
+                          </span>
+                        )}
+                      </div>
+                      {(order.details || order.production_notes || order.notes) && (
+                        <div className="mt-2 text-[#d8ccfb]">
+                          {order.details || order.production_notes || order.notes}
+                        </div>
                       )}
                     </div>
                   ))}
@@ -904,6 +1139,7 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
               logs={visibleJournalEntries}
               onClearFollowUp={clearScheduledFollowUp}
               onEditFollowUp={editScheduledFollowUp}
+              onEditOutreach={setEditingOutreachLog}
               pendingFollowUpId={updatingFollowUpId}
               onServerLogsChanged={refreshServerJournalLogs}
             />
@@ -914,8 +1150,20 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
       {showLogModal && (
         <LogOutreachModal
           account={account}
+          suggestedNextStep={parseActivityNote(visibleJournalEntries[0]?.note ?? null).nextStep ?? undefined}
           onClose={() => setShowLogModal(false)}
           onSubmit={handleSubmitOutreach}
+        />
+      )}
+
+      {editingOutreachLog && (
+        <LogOutreachModal
+          account={account}
+          initialLog={editingOutreachLog}
+          title={`Edit Outreach - ${account.account}`}
+          submitLabel="Save Outreach"
+          onClose={() => setEditingOutreachLog(null)}
+          onSubmit={handleUpdateOutreachLog}
         />
       )}
     </div>

@@ -5,7 +5,6 @@ import { PipelineView } from "@/types/pipeline";
 const ITEMS: { key: PipelineView; label: string; desc: string }[] = [
   { key: "table", label: "Command Table", desc: "Dense, urgency-sorted" },
   { key: "board", label: "Stage Board",   desc: "Kanban by status" },
-  { key: "hot",   label: "Hot List",      desc: "Today's focus" },
 ];
 
 export function ViewSwitcher({

@@ -52,11 +52,19 @@ export function getAccountHealth(account: AnyAccount, logs: ActivityLog[]): Acco
     reasons.push("Overdue follow-up");
   }
 
-  if (account.status === "Following Up" && days >= 7) {
+  // Stage-specific staleness penalties
+  if ((account.status === "Decision Pending") && days >= 3) {
+    penalty += 20;
+    reasons.push("Decision pending — needs close");
+  } else if ((account.status === "Tasting Complete") && days >= 5) {
+    penalty += 16;
+    reasons.push("Tasting done — needs follow-up");
+  } else if ((account.status === "Sample Sent") && days >= 7) {
+    penalty += 14;
+    reasons.push("Sample sent — no feedback yet");
+  } else if ((account.status === "Connected" || account.status === "Following Up") && days >= 7) {
     penalty += 12;
-  }
-
-  if (account.status === "Contacted" && days >= 5) {
+  } else if ((account.status === "Reached Out" || account.status === "Contacted") && days >= 5) {
     penalty += 8;
   }
 

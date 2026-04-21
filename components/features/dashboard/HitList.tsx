@@ -20,6 +20,7 @@ export function HitList({ items }: { items: HitListItem[] }) {
     statusAfter: string;
     note: string;
     followUpDate: string;
+    nextActionType: string;
   }) => {
     if (!modalAccount) return;
 
@@ -34,6 +35,7 @@ export function HitList({ items }: { items: HitListItem[] }) {
         source: "manual",
         activityKind: "outreach",
         countsAsContact: true,
+        nextActionType: data.nextActionType,
       });
     } catch {
       showActionFeedback("Couldn’t save that outreach entry to the online timeline.", "error");
@@ -65,30 +67,6 @@ export function HitList({ items }: { items: HitListItem[] }) {
     if (!response.ok) {
       showActionFeedback("Outreach was logged, but the sheet update failed.", "error");
       return;
-    }
-
-    // Create Notion task if follow-up date set
-    if (data.followUpDate) {
-      try {
-        const notionRes = await fetch("/api/notion/tasks", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            accountName: modalAccount.account,
-            contactName: "contactName" in modalAccount ? modalAccount.contactName : "",
-            followUpDate: data.followUpDate,
-            accountUrl: `${window.location.origin}/accounts/${modalAccount._tabSlug}/${modalAccount._rowIndex}`,
-          }),
-        });
-        if (!notionRes.ok) {
-          const errText = await notionRes.text();
-          console.error("Notion task creation failed:", notionRes.status, errText);
-        } else {
-          console.log("Notion task created successfully");
-        }
-      } catch (err) {
-        console.error("Notion task fetch error:", err);
-      }
     }
 
     await fetchAllTabs();

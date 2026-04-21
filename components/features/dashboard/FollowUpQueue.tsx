@@ -4,14 +4,15 @@ import Link from "next/link";
 import { AnyAccount, AllTabsData } from "@/types/accounts";
 import { ActivityLog } from "@/types/activity";
 import { Card } from "@/components/ui/Card";
-import { formatDate, daysSince } from "@/lib/utils/dates";
-import { getAllAccounts, getResolvedFollowUpDate } from "@/lib/activity/timeline";
+import { formatDate, daysSince, parseAppDate } from "@/lib/utils/dates";
+import { getAllAccounts, getResolvedFollowUpDate, getScheduledFollowUpLogForAccount } from "@/lib/activity/timeline";
 
 interface FollowUpItem {
   account: AnyAccount;
   reason: string;
   bucket: "overdue" | "today" | "upcoming";
   followUpDate: string;
+  logId: string | null;
 }
 
 export function buildFollowUpQueue(
@@ -24,7 +25,7 @@ export function buildFollowUpQueue(
   return getAllAccounts(data)
     .map((account) => {
       const followUpRaw = getResolvedFollowUpDate(account, logs);
-      const followUpDate = followUpRaw ? new Date(followUpRaw) : null;
+      const followUpDate = followUpRaw ? parseAppDate(followUpRaw) : null;
 
       if (!followUpDate || isNaN(followUpDate.getTime())) return null;
 
@@ -42,18 +43,34 @@ export function buildFollowUpQueue(
             ? "Follow-up scheduled for today"
             : "Upcoming scheduled follow-up";
 
+      const followUpLog = getScheduledFollowUpLogForAccount(logs, account);
       return {
         account,
         reason,
         bucket,
         followUpDate: followUpDate.toISOString(),
+        logId: followUpLog?.id ?? null,
       };
     })
     .filter((item): item is FollowUpItem => Boolean(item))
     .sort((a, b) => new Date(a.followUpDate).getTime() - new Date(b.followUpDate).getTime());
 }
 
-export function FollowUpQueue({ items }: { items: FollowUpItem[] }) {
+function snoozeDate(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${month}-${day}`;
+}
+
+export function FollowUpQueue({
+  items,
+  onSnooze,
+}: {
+  items: FollowUpItem[];
+  onSnooze?: (logId: string, newDate: string) => Promise<void>;
+}) {
   if (!items.length) return null;
 
   return (
@@ -93,7 +110,22 @@ export function FollowUpQueue({ items }: { items: FollowUpItem[] }) {
                 </div>
                 <div className="mt-1 text-sm text-[#d8ccfb]">{item.reason}</div>
               </div>
-              <div className="text-sm text-rs-gold">{formatDate(item.followUpDate)}</div>
+              <div className="flex items-center gap-3">
+                {item.logId && onSnooze && (
+                  <div className="flex gap-1">
+                    {[{ label: "+2d", days: 2 }, { label: "+1w", days: 7 }].map(({ label, days }) => (
+                      <button
+                        key={label}
+                        onClick={() => onSnooze(item.logId!, snoozeDate(days))}
+                        className="rounded border border-rs-border/60 bg-white/5 px-2 py-0.5 text-[11px] text-[#af9fe6] hover:border-rs-gold/50 hover:text-rs-gold transition-colors"
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <div className="text-sm text-rs-gold whitespace-nowrap">{formatDate(item.followUpDate)}</div>
+              </div>
             </div>
           </Card>
         ))}

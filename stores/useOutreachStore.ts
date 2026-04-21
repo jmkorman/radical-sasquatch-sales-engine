@@ -28,6 +28,7 @@ export interface OutreachEntry {
   status_before: string;
   status_after: string;
   follow_up_date: string | null;
+  next_action_type?: string | null;
   created_at: string;
   source?: string;
   activity_kind?: "outreach" | "note" | "research" | "order";

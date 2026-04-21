@@ -20,8 +20,8 @@ export function buildHitList(
   const items: HitListItem[] = [];
 
   for (const account of allAccounts) {
-    // Skip closed accounts and accounts with blank status
-    if (account.status === "Closed - Won" || account.status === "") continue;
+    // Skip terminal/closed statuses and blank records
+    if (["Closed - Won", "Not a Fit", "Not Interested", ""].includes(account.status)) continue;
     if (!account.account) continue;
 
     const lastActivity = getLatestContactLogForAccount(logs, account);
@@ -37,26 +37,45 @@ export function buildHitList(
     let score = 0;
     let reason = "";
 
-    // Rule 1: Next steps has a date that is due or overdue
+    // Rule 1: Follow-up date is due or overdue
     const nextStepsDate = parseDateFromText(account.nextSteps ?? "");
     if (nextStepsDate && nextStepsDate.getTime() <= new Date().setHours(23, 59, 59, 999)) {
+      score = 5;
+      reason = "Follow-up is due";
+    }
+    // Rule 2: Decision Pending — these are close to closing, always urgent
+    else if (account.status === "Decision Pending" && daysAgo >= 3) {
+      score = 5;
+      reason = `Decision pending — ${daysAgo}d since last touch`;
+    }
+    // Rule 3: Tasting Complete — product tried, no order yet, needs close
+    else if (account.status === "Tasting Complete" && daysAgo >= 5) {
       score = 4;
-      reason = "Next step is due";
+      reason = `Tasting done — ${daysAgo}d since follow-up`;
     }
-    // Rule 2: Following Up, no touch in 7+ days
-    else if (account.status === "Following Up" && daysAgo >= 7) {
+    // Rule 4: Sample Sent — need feedback check-in
+    else if (account.status === "Sample Sent" && daysAgo >= 5) {
+      score = 4;
+      reason = `Sample sent — ${daysAgo}d, check in for feedback`;
+    }
+    // Rule 5: Connected (active dialogue), going stale
+    else if ((account.status === "Connected" || account.status === "Following Up") && daysAgo >= 7) {
       score = 3;
-      reason = `Following up - ${daysAgo} days since last touch`;
+      reason = `Connected — ${daysAgo}d since last touch`;
     }
-    // Rule 3: Contacted, no touch in 5+ days
-    else if (account.status === "Contacted" && daysAgo >= 5) {
+    // Rule 6: Reached Out / Contacted, waiting for response
+    else if ((account.status === "Reached Out" || account.status === "Contacted") && daysAgo >= 5) {
       score = 2;
-      reason = `Contacted - ${daysAgo} days since last touch`;
+      reason = `Reached out — ${daysAgo}d, follow up`;
     }
-    // Rule 4: Researched, never contacted
-    else if (account.status === "Researched" && !lastActivity && !("contactDate" in account && account.contactDate)) {
+    // Rule 7: Identified/Researched, never contacted
+    else if (
+      (account.status === "Identified" || account.status === "Researched") &&
+      !lastActivity &&
+      !("contactDate" in account && account.contactDate)
+    ) {
       score = 1;
-      reason = "Researched - no outreach yet";
+      reason = "Not yet contacted";
     }
 
     if (score > 0) {

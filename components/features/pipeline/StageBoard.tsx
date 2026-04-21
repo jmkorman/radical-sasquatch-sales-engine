@@ -1,9 +1,11 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { AllTabsData, AnyAccount } from "@/types/accounts";
+import { ActivityLog } from "@/types/activity";
 import { PipelineTweaks } from "@/types/pipeline";
 import {
+  ACTIVE_PIPELINE_STATUSES,
   PIPELINE_STATUSES,
   STATUS_PALETTE,
   urgencyScore,
@@ -15,8 +17,17 @@ import {
 } from "@/lib/pipeline/urgency";
 import { StatusDot } from "./StatusIndicators";
 import { PipelineSubTabs } from "./CommandTable";
+import { getRevenueTier } from "@/lib/utils/revenue";
+import { getLatestContactLogForAccount, getLogsForAccount } from "@/lib/activity/timeline";
+import Link from "next/link";
 
 const PIPELINE_TABS: PipelineTabName[] = ["All", "Restaurants", "Retail", "Catering", "Food Truck"];
+
+interface BoardAccount {
+  account: AnyAccount;
+  status: string;
+  lastContactDate: string;
+}
 
 export function StageBoard({
   data,
@@ -27,6 +38,14 @@ export function StageBoard({
 }) {
   const [activeTab, setActiveTab] = useState<PipelineTabName>("All");
   const [search, setSearch] = useState("");
+  const [serverLogs, setServerLogs] = useState<ActivityLog[]>([]);
+
+  useEffect(() => {
+    fetch("/api/activity", { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : []))
+      .then((logs: ActivityLog[]) => setServerLogs(logs))
+      .catch(() => setServerLogs([]));
+  }, []);
 
   const tabCounts = useMemo(
     () => ({
@@ -41,27 +60,60 @@ export function StageBoard({
 
   const all = useMemo(() => getForPipelineTab(data, activeTab), [data, activeTab]);
 
+  const boardAccounts = useMemo<BoardAccount[]>(() => {
+    return all.map((account) => {
+      const accountLogs = getLogsForAccount(serverLogs, account);
+      const latestStatus = accountLogs.find((log) => log.status_after)?.status_after?.trim();
+      const latestContact = getLatestContactLogForAccount(serverLogs, account);
+
+      return {
+        account,
+        status: latestStatus || account.status || "Identified",
+        lastContactDate: latestContact?.created_at || account.contactDate,
+      };
+    });
+  }, [all, serverLogs]);
+
   const filtered = useMemo(() => {
-    if (!search) return all;
+    if (!search) return boardAccounts;
     const q = search.toLowerCase();
-    return all.filter(
-      (a) =>
-        a.account.toLowerCase().includes(q) ||
-        (a.contactName || "").toLowerCase().includes(q)
+    return boardAccounts.filter(
+      ({ account }) =>
+        account.account.toLowerCase().includes(q) ||
+        (account.contactName || "").toLowerCase().includes(q)
     );
-  }, [all, search]);
+  }, [boardAccounts, search]);
 
   const byStage = useMemo(() => {
-    const m: Record<string, AnyAccount[]> = {};
+    const m: Record<string, BoardAccount[]> = {};
+    // Initialize all active stages + handle any legacy statuses that exist in data
     PIPELINE_STATUSES.forEach((s) => (m[s] = []));
-    filtered.forEach((a) => {
-      const s = a.status || "Identified";
+    filtered.forEach((item) => {
+      const s = item.status || "Identified";
       if (!m[s]) m[s] = [];
-      m[s].push(a);
+      m[s].push(item);
     });
-    PIPELINE_STATUSES.forEach((s) => m[s].sort((a, b) => urgencyScore(b) - urgencyScore(a)));
+    Object.keys(m).forEach((s) =>
+      m[s].sort((a, b) => {
+        const bAccount = { ...b.account, status: b.status } as AnyAccount;
+        const aAccount = { ...a.account, status: a.status } as AnyAccount;
+        return urgencyScore(bAccount, b.lastContactDate) - urgencyScore(aAccount, a.lastContactDate);
+      })
+    );
     return m;
   }, [filtered]);
+
+  // Columns to display: active stages + any legacy stages that have accounts
+  const displayStages = useMemo(() => {
+    const legacy = PIPELINE_STATUSES.filter(
+      (s) => !ACTIVE_PIPELINE_STATUSES.includes(s as typeof ACTIVE_PIPELINE_STATUSES[number]) &&
+	             (byStage[s]?.length ?? 0) > 0
+    );
+    const extra = Object.keys(byStage).filter(
+      (s) => !PIPELINE_STATUSES.includes(s as typeof PIPELINE_STATUSES[number]) && (byStage[s]?.length ?? 0) > 0
+    );
+    return [...ACTIVE_PIPELINE_STATUSES, ...legacy, ...extra];
+  }, [byStage]);
 
   return (
     <div>
@@ -151,12 +203,12 @@ export function StageBoard({
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(5, minmax(200px, 1fr))",
+          gridTemplateColumns: `repeat(${displayStages.length}, minmax(200px, 1fr))`,
           gap: 12,
           overflowX: "auto",
         }}
       >
-        {PIPELINE_STATUSES.map((s) => (
+        {displayStages.map((s) => (
           <StageColumn
             key={s}
             status={s}
@@ -175,10 +227,10 @@ function StageColumn({
   tweaks,
 }: {
   status: string;
-  accounts: AnyAccount[];
+  accounts: BoardAccount[];
   tweaks: PipelineTweaks;
 }) {
-  const c = STATUS_PALETTE[status];
+  const c = STATUS_PALETTE[status] ?? STATUS_PALETTE[""];
 
   return (
     <div
@@ -239,8 +291,13 @@ function StageColumn({
 
       {/* Cards */}
       <div style={{ padding: 10, display: "flex", flexDirection: "column", gap: 8, flex: 1 }}>
-        {accounts.map((a) => (
-          <StageCard key={`${a._tab}_${a._rowIndex}`} account={a} tweaks={tweaks} />
+        {accounts.map((item) => (
+          <StageCard
+            key={`${item.account._tab}_${item.account._rowIndex}`}
+            account={item.account}
+            lastContactDate={item.lastContactDate}
+            tweaks={tweaks}
+          />
         ))}
         {accounts.length === 0 && (
           <div
@@ -265,24 +322,30 @@ function StageColumn({
 
 function StageCard({
   account,
+  lastContactDate,
   tweaks,
 }: {
   account: AnyAccount;
+  lastContactDate: string;
   tweaks: PipelineTweaks;
 }) {
-  const touch = formatContactPipeline(account.contactDate);
-  const temp = tempLabelPipeline(touch.days);
-  const isStale = temp.tone === "cold" && touch.days !== null && touch.days > 14;
+  const touch = formatContactPipeline(lastContactDate);
+  const temp = tempLabelPipeline(touch.days, account._tabSlug);
+  const isStale = temp.tone === "cold";
   const isHot = temp.tone === "hot";
   const glow = isStale
     ? "0 0 0 1px rgba(255,124,112,0.4), 0 0 16px rgba(255,124,112,0.25)"
     : isHot
     ? "0 0 0 1px rgba(100,245,234,0.3), 0 0 14px rgba(100,245,234,0.18)"
     : "none";
+  const href = `/accounts/${account._tabSlug}/${account._rowIndex}`;
 
   return (
-    <div
+    <Link
+      href={href}
+      aria-label={`Open ${account.account}`}
       style={{
+        display: "block",
         padding: 11,
         borderRadius: 10,
         border: "1px solid rgba(73,48,140,0.45)",
@@ -290,9 +353,10 @@ function StageCard({
         boxShadow: tweaks.neon ? glow : "none",
         cursor: "pointer",
         transition: "transform 120ms ease",
+        textDecoration: "none",
       }}
-      onMouseEnter={(e) => ((e.currentTarget as HTMLDivElement).style.transform = "translateY(-1px)")}
-      onMouseLeave={(e) => ((e.currentTarget as HTMLDivElement).style.transform = "translateY(0)")}
+      onMouseEnter={(e) => ((e.currentTarget as HTMLAnchorElement).style.transform = "translateY(-1px)")}
+      onMouseLeave={(e) => ((e.currentTarget as HTMLAnchorElement).style.transform = "translateY(0)")}
     >
       <div
         style={{
@@ -314,6 +378,15 @@ function StageCard({
         >
           {account.account}
         </div>
+        {(() => {
+          const tier = getRevenueTier("estMonthlyOrder" in account ? account.estMonthlyOrder : undefined);
+          if (!tier.tier) return null;
+          return (
+            <span style={{ fontSize: 10, fontWeight: 800, color: tier.color, flexShrink: 0 }}>
+              {tier.label}
+            </span>
+          );
+        })()}
       </div>
 
       <div style={{ fontSize: 10.5, color: "#8c7fbd", marginBottom: 8, letterSpacing: 0.2 }}>
@@ -365,7 +438,7 @@ function StageCard({
           </div>
         )}
       </div>
-    </div>
+    </Link>
   );
 }
 

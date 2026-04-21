@@ -50,6 +50,7 @@ export function QuickLogButton() {
     statusAfter: string;
     note: string;
     followUpDate: string;
+    nextActionType: string;
   }) => {
     if (!selectedAccount) return;
 
@@ -63,6 +64,7 @@ export function QuickLogButton() {
       source: "manual",
       activityKind: "outreach",
       countsAsContact: true,
+      nextActionType: outreachData.nextActionType,
     });
 
     await fetch("/api/sheets/update", {
@@ -76,19 +78,6 @@ export function QuickLogButton() {
         nextSteps: outreachData.note,
       }),
     });
-
-    if (outreachData.followUpDate) {
-      void fetch("/api/notion/tasks", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          accountName: selectedAccount.account,
-          contactName: selectedAccount.contactName ?? "",
-          followUpDate: outreachData.followUpDate,
-          accountUrl: `${window.location.origin}/accounts/${selectedAccount._tabSlug}/${selectedAccount._rowIndex}`,
-        }),
-      }).catch(() => {});
-    }
 
     await fetchAllTabs();
     handleClose();

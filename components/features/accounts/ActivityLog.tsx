@@ -4,6 +4,7 @@ import { useState } from "react";
 import { ActivityLog as ActivityLogType } from "@/types/activity";
 import { formatDate } from "@/lib/utils/dates";
 import { parseActivityNote } from "@/lib/activity/notes";
+import { getActivityKind } from "@/lib/activity/helpers";
 import Link from "next/link";
 import { Button } from "@/components/ui/Button";
 import { useTrashStore } from "@/stores/useTrashStore";
@@ -13,6 +14,8 @@ const ACTION_ICONS: Record<string, string> = {
   call: "M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z",
   email: "M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z",
   "in-person": "M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z",
+  "sample-sent": "M20 7l-8-4-8 4m16 0-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4",
+  "tasting-complete": "M9 12l2 2 4-4m5 2a8 8 0 11-16 0 8 8 0 0116 0z",
   note: "M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z",
 };
 
@@ -21,6 +24,8 @@ export function ActivityLogList({
   showDeleted = false,
   onClearFollowUp,
   onEditFollowUp,
+  onEditOutreach,
+  editAllWithOutreachModal = false,
   pendingFollowUpId = null,
   onServerLogsChanged,
 }: {
@@ -28,6 +33,8 @@ export function ActivityLogList({
   showDeleted?: boolean;
   onClearFollowUp?: (log: ActivityLogType) => void;
   onEditFollowUp?: (log: ActivityLogType, newDate: string) => Promise<void> | void;
+  onEditOutreach?: (log: ActivityLogType) => void;
+  editAllWithOutreachModal?: boolean;
   pendingFollowUpId?: string | null;
   onServerLogsChanged?: () => Promise<void> | void;
 }) {
@@ -109,6 +116,8 @@ export function ActivityLogList({
     <div className="space-y-3">
       {visibleLogs.map((log) => {
         const parsedNote = parseActivityNote(log.note);
+        const isOutreach = getActivityKind(log) === "outreach";
+        const shouldUseOutreachEditor = Boolean(onEditOutreach && (isOutreach || editAllWithOutreachModal));
         const sourceLabel =
           log.source === "research"
             ? "Research"
@@ -139,6 +148,10 @@ export function ActivityLogList({
                   )}
                   {log.follow_up_date && editingFollowUpId !== log.id && (
                     <span className="rounded-full border border-rs-punch/40 bg-rs-punch/10 px-2 py-0.5 text-[11px] font-medium text-[#ffd6e8] cursor-pointer hover:opacity-80 transition-opacity" onClick={() => {
+                      if (shouldUseOutreachEditor && onEditOutreach) {
+                        onEditOutreach(log);
+                        return;
+                      }
                       setEditingFollowUpId(log.id);
                       setEditingFollowUpDate(log.follow_up_date || "");
                     }}>
@@ -257,11 +270,15 @@ export function ActivityLogList({
                         variant="ghost"
                         className="px-2 py-1 text-xs"
                         onClick={() => {
+                          if (shouldUseOutreachEditor && onEditOutreach) {
+                            onEditOutreach(log);
+                            return;
+                          }
                           setEditingNoteId(log.id);
                           setEditingNoteContent(log.note || "");
                         }}
                       >
-                        Edit Note
+                        {shouldUseOutreachEditor ? "Edit Outreach" : "Edit Note"}
                       </Button>
                     )}
                     {log.follow_up_date && !showDeleted && onClearFollowUp && (

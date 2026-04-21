@@ -1,4 +1,4 @@
-export type PipelineView = "table" | "board" | "hot";
+export type PipelineView = "table" | "board";
 
 export interface PipelineTweaks {
   density: "compact" | "comfy" | "roomy";

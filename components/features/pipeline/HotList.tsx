@@ -1,15 +1,19 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, type KeyboardEvent } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { AllTabsData, AnyAccount } from "@/types/accounts";
+import { ActivityLog } from "@/types/activity";
 import { PipelineTweaks } from "@/types/pipeline";
 import { LogOutreachModal } from "@/components/features/dashboard/LogOutreachModal";
 import { useSheetStore } from "@/stores/useSheetStore";
 import { useUIStore } from "@/stores/useUIStore";
 import { persistActivityEntry } from "@/lib/activity/persist";
+import { getLatestContactLogForAccount } from "@/lib/activity/timeline";
 import { todayISO } from "@/lib/utils/dates";
 import {
-  urgencyScore,
+  activityScore,
   parseDollarsPipeline,
   formatContactPipeline,
   tempLabelPipeline,
@@ -22,6 +26,10 @@ import {
 import { StatusPill } from "./StatusIndicators";
 import { PipelineSubTabs } from "./CommandTable";
 
+function getResolvedLastContactDate(account: AnyAccount, logs: ActivityLog[]): string {
+  return getLatestContactLogForAccount(logs, account)?.created_at || account.contactDate;
+}
+
 export function HotList({
   data,
   tweaks,
@@ -31,9 +39,17 @@ export function HotList({
 }) {
   const [activeTab, setActiveTab] = useState<PipelineTabName>("All");
   const [modalAccount, setModalAccount] = useState<AnyAccount | null>(null);
+  const [serverLogs, setServerLogs] = useState<ActivityLog[]>([]);
 
   const { fetchAllTabs } = useSheetStore();
   const showActionFeedback = useUIStore((state) => state.showActionFeedback);
+
+  useEffect(() => {
+    fetch("/api/activity", { cache: "no-store" })
+      .then((r) => r.ok ? r.json() : [])
+      .then(setServerLogs)
+      .catch(() => setServerLogs([]));
+  }, []);
 
   const tabCounts = useMemo(
     () => ({
@@ -50,9 +66,12 @@ export function HotList({
     const all = getForPipelineTab(data, activeTab);
     return all
       .filter((a) => a.status !== "Closed - Won")
-      .map((a) => ({ a, score: urgencyScore(a) }))
+      .map((a) => {
+        const lastContactDate = getResolvedLastContactDate(a, serverLogs);
+        return { a, lastContactDate, score: activityScore(a, lastContactDate) };
+      })
       .sort((x, y) => y.score - x.score);
-  }, [data, activeTab]);
+  }, [data, activeTab, serverLogs]);
 
   const today = ranked.slice(0, 3);
   const thisWeek = ranked.slice(3, 8);
@@ -69,7 +88,7 @@ export function HotList({
   ).length;
 
   const goingStale = ranked.filter(
-    (r) => (daysSincePipeline(r.a.contactDate) ?? 0) > 14
+    (r) => (daysSincePipeline(r.lastContactDate) ?? 0) > 14
   ).length;
 
   const todayDate = new Date();
@@ -84,6 +103,7 @@ export function HotList({
     statusAfter: string;
     note: string;
     followUpDate: string;
+    nextActionType: string;
   }) => {
     if (!modalAccount) return;
     try {
@@ -97,6 +117,7 @@ export function HotList({
         source: "manual",
         activityKind: "outreach",
         countsAsContact: true,
+        nextActionType: outreachData.nextActionType,
       });
     } catch {
       showActionFeedback("Couldn't save outreach entry.", "error");
@@ -118,19 +139,6 @@ export function HotList({
     if (!response.ok) {
       showActionFeedback("Outreach logged, but pipeline row failed to update.", "error");
       return;
-    }
-
-    if (outreachData.followUpDate) {
-      void fetch("/api/notion/tasks", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          accountName: modalAccount.account,
-          contactName: modalAccount.contactName ?? "",
-          followUpDate: outreachData.followUpDate,
-          accountUrl: `${window.location.origin}/accounts/${modalAccount._tabSlug}/${modalAccount._rowIndex}`,
-        }),
-      }).catch(() => {});
     }
 
     await fetchAllTabs();
@@ -201,7 +209,7 @@ export function HotList({
                 lineHeight: 1.5,
               }}
             >
-              Ranked by stage × staleness × monthly value. Top three are today&apos;s priority.{" "}
+              Ranked by live stage × recent activity × monthly value. Top three are today&apos;s priority.{" "}
               {thisWeek.length} more this week.
             </div>
           </div>
@@ -230,6 +238,7 @@ export function HotList({
             <HotCard
               key={`${r.a._tab}_${r.a._rowIndex}`}
               account={r.a}
+              lastContactDate={r.lastContactDate}
               rank={i + 1}
               tier="today"
               tweaks={tweaks}
@@ -253,6 +262,7 @@ export function HotList({
               <HotCard
                 key={`${r.a._tab}_${r.a._rowIndex}`}
                 account={r.a}
+                lastContactDate={r.lastContactDate}
                 tier="week"
                 tweaks={tweaks}
                 onLogOutreach={() => setModalAccount(r.a)}
@@ -278,10 +288,13 @@ export function HotList({
           >
             {onDeck.map((r) => {
               const c = STATUS_PALETTE[r.a.status] ?? STATUS_PALETTE[""];
-              const touch = formatContactPipeline(r.a.contactDate);
+              const touch = formatContactPipeline(r.lastContactDate);
+              const href = `/accounts/${r.a._tabSlug}/${r.a._rowIndex}`;
               return (
-                <div
+                <Link
                   key={`${r.a._tab}_${r.a._rowIndex}`}
+                  href={href}
+                  aria-label={`Open ${r.a.account}`}
                   style={{
                     padding: "8px 10px",
                     borderRadius: 8,
@@ -289,6 +302,8 @@ export function HotList({
                     justifyContent: "space-between",
                     alignItems: "center",
                     gap: 6,
+                    textDecoration: "none",
+                    cursor: "pointer",
                   }}
                 >
                   <div
@@ -331,7 +346,7 @@ export function HotList({
                   >
                     {touch.label}
                   </span>
-                </div>
+                </Link>
               );
             })}
           </div>
@@ -457,24 +472,40 @@ function HotSection({
 
 function HotCard({
   account,
+  lastContactDate,
   rank,
   tier,
   tweaks,
   onLogOutreach,
 }: {
   account: AnyAccount;
+  lastContactDate: string;
   rank?: number;
   tier: "today" | "week";
   tweaks: PipelineTweaks;
   onLogOutreach: () => void;
 }) {
-  const touch = formatContactPipeline(account.contactDate);
+  const touch = formatContactPipeline(lastContactDate);
   const temp = tempLabelPipeline(touch.days);
   const c = STATUS_PALETTE[account.status] ?? STATUS_PALETTE[""];
   const isBig = tier === "today";
+  const router = useRouter();
+  const href = `/accounts/${account._tabSlug}/${account._rowIndex}`;
+  const openAccount = () => router.push(href);
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      openAccount();
+    }
+  };
 
   return (
     <div
+      role="link"
+      tabIndex={0}
+      aria-label={`Open ${account.account}`}
+      onClick={openAccount}
+      onKeyDown={handleKeyDown}
       style={{
         padding: isBig ? 18 : 14,
         borderRadius: 14,
@@ -483,6 +514,7 @@ function HotCard({
         boxShadow: tweaks.neon && isBig ? `0 0 0 1px ${c.glow}, 0 10px 30px rgba(0,0,0,0.3)` : "none",
         position: "relative",
         overflow: "hidden",
+        cursor: "pointer",
       }}
     >
       {rank && (
@@ -505,23 +537,6 @@ function HotCard({
 
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
         <StatusPill status={account.status} />
-        {temp.tone === "cold" && touch.days !== null && touch.days > 14 && (
-          <span
-            style={{
-              fontSize: 10,
-              fontWeight: 700,
-              color: "#ff7c70",
-              letterSpacing: 0.4,
-              textTransform: "uppercase",
-              fontFamily: "'Space Grotesk', sans-serif",
-              padding: "3px 8px",
-              border: "1px solid rgba(255,124,112,0.35)",
-              borderRadius: 999,
-            }}
-          >
-            {touch.days}d stale
-          </span>
-        )}
       </div>
 
       <div
@@ -619,6 +634,8 @@ function HotCard({
           {account.phone && (
             <a
               href={`tel:${account.phone}`}
+              onClick={(event) => event.stopPropagation()}
+              onKeyDown={(event) => event.stopPropagation()}
               style={{
                 width: 32,
                 height: 32,
@@ -641,6 +658,8 @@ function HotCard({
           {account.email && (
             <a
               href={`mailto:${account.email}`}
+              onClick={(event) => event.stopPropagation()}
+              onKeyDown={(event) => event.stopPropagation()}
               style={{
                 width: 32,
                 height: 32,
@@ -662,7 +681,11 @@ function HotCard({
             </a>
           )}
           <button
-            onClick={onLogOutreach}
+            onClick={(event) => {
+              event.stopPropagation();
+              onLogOutreach();
+            }}
+            onKeyDown={(event) => event.stopPropagation()}
             style={{
               width: 32,
               height: 32,

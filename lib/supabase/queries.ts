@@ -1,6 +1,7 @@
 import { createServerClient } from "./server";
 import { ActivityLog } from "@/types/activity";
 import { OrderRecord } from "@/types/orders";
+import { normalizeOrderRecord } from "@/lib/orders/helpers";
 
 function normalizeActivityLog(log: Partial<ActivityLog>): ActivityLog {
   return {
@@ -15,6 +16,7 @@ function normalizeActivityLog(log: Partial<ActivityLog>): ActivityLog {
     status_after: log.status_after ?? null,
     follow_up_date: log.follow_up_date ?? null,
     notion_task_id: log.notion_task_id ?? null,
+    next_action_type: log.next_action_type ?? null,
     source: log.source ?? "manual",
     created_at: log.created_at ?? new Date().toISOString(),
     activity_kind:
@@ -43,6 +45,7 @@ export async function insertActivityLog(entry: {
   status_after?: string | null;
   follow_up_date?: string | null;
   notion_task_id?: string | null;
+  next_action_type?: string | null;
   source?: string;
   activity_kind?: string;
   counts_as_contact?: boolean;
@@ -110,18 +113,33 @@ export async function getDeletedActivityLogs(accountId?: string): Promise<Activi
 
 export async function updateActivityLog(
   id: string,
-  updates: Partial<Pick<ActivityLog, "follow_up_date" | "note" | "status_before" | "status_after" | "is_deleted">>
+  updates: Partial<Pick<ActivityLog, "action_type" | "note" | "status_before" | "status_after" | "follow_up_date" | "next_action_type" | "source" | "activity_kind" | "counts_as_contact" | "is_deleted">>
 ) {
   const supabase = createServerClient();
-  const { data, error } = await supabase
-    .from("activity_logs")
-    .update(updates)
-    .eq("id", id)
-    .select()
-    .single();
+  let payload: Record<string, unknown> = { ...updates };
 
-  if (error) throw error;
-  return normalizeActivityLog(data as Partial<ActivityLog>);
+  while (true) {
+    const { data, error } = await supabase
+      .from("activity_logs")
+      .update(payload)
+      .eq("id", id)
+      .select()
+      .single();
+
+    if (!error) {
+      return normalizeActivityLog(data as Partial<ActivityLog>);
+    }
+
+    const missingColumn = getMissingColumn(error);
+    if (missingColumn && missingColumn in payload) {
+      const nextPayload = { ...payload };
+      delete nextPayload[missingColumn];
+      payload = nextPayload;
+      continue;
+    }
+
+    throw error;
+  }
 }
 
 export async function deleteActivityLog(id: string) {
@@ -176,26 +194,73 @@ export async function getOrders(accountId?: string): Promise<OrderRecord[]> {
 
   const { data, error } = await query;
   if (error) throw error;
-  return (data ?? []) as OrderRecord[];
+  return (data ?? []).map((order) => normalizeOrderRecord(order as Partial<OrderRecord>));
 }
 
-export async function insertOrder(entry: {
+export async function insertOrder(entry: Partial<OrderRecord> & {
   account_id: string;
   account_name: string;
   tab: string;
   order_date: string;
-  amount: number;
-  notes?: string | null;
 }) {
   const supabase = createServerClient();
-  const { data, error } = await supabase
-    .from("orders")
-    .insert([entry])
-    .select()
-    .single();
 
-  if (error) throw error;
-  return data as OrderRecord;
+  let payload: Record<string, unknown> = { ...entry };
+
+  while (true) {
+    const { data, error } = await supabase
+      .from("orders")
+      .insert([payload])
+      .select()
+      .single();
+
+    if (!error) return normalizeOrderRecord(data as Partial<OrderRecord>);
+
+    const missingColumn = getMissingColumn(error);
+    if (missingColumn && missingColumn in payload) {
+      const nextPayload = { ...payload };
+      delete nextPayload[missingColumn];
+      payload = nextPayload;
+      continue;
+    }
+
+    throw error;
+  }
+}
+
+export async function updateOrder(
+  id: string,
+  updates: Partial<Omit<OrderRecord, "id" | "created_at">>
+) {
+  const supabase = createServerClient();
+  let payload: Record<string, unknown> = { ...updates };
+
+  while (true) {
+    if (Object.keys(payload).length === 0) {
+      const { data, error } = await supabase.from("orders").select("*").eq("id", id).single();
+      if (error) throw error;
+      return normalizeOrderRecord(data as Partial<OrderRecord>);
+    }
+
+    const { data, error } = await supabase
+      .from("orders")
+      .update(payload)
+      .eq("id", id)
+      .select()
+      .single();
+
+    if (!error) return normalizeOrderRecord(data as Partial<OrderRecord>);
+
+    const missingColumn = getMissingColumn(error);
+    if (missingColumn && missingColumn in payload) {
+      const nextPayload = { ...payload };
+      delete nextPayload[missingColumn];
+      payload = nextPayload;
+      continue;
+    }
+
+    throw error;
+  }
 }
 
 export async function deleteOrder(id: string) {

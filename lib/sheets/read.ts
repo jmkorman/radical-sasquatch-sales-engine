@@ -26,8 +26,32 @@ function shouldIncludeAccount(name: string): boolean {
 }
 
 function toStatus(val: string): StatusValue {
-  const valid = ["Identified", "Researched", "Contacted", "Following Up", "Closed - Won"];
-  return valid.includes(val) ? (val as StatusValue) : "";
+  const normalized = val
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/[–—]/g, "-")
+    .toLowerCase();
+
+  const statuses: Record<string, StatusValue> = {
+    identified: "Identified",
+    researched: "Researched",
+    contacted: "Contacted",
+    "reached out": "Reached Out",
+    connected: "Connected",
+    "following up": "Following Up",
+    "sample sent": "Sample Sent",
+    "tasting complete": "Tasting Complete",
+    "tasting done": "Tasting Complete",
+    "decision pending": "Decision Pending",
+    backburner: "Backburner",
+    "closed - won": "Closed - Won",
+    "closed won": "Closed - Won",
+    won: "Closed - Won",
+    "not interested": "Not Interested",
+    "not a fit": "Not a Fit",
+  };
+
+  return statuses[normalized] ?? "";
 }
 
 function mapRestaurant(row: string[], rowIndex: number): RestaurantAccount {
@@ -45,6 +69,7 @@ function mapRestaurant(row: string[], rowIndex: number): RestaurantAccount {
     dumplings: cell(row, c.DUMPLINGS),
     status: toStatus(cell(row, c.STATUS)),
     nextSteps: cell(row, c.NEXT_STEPS),
+    nextActionType: "",
     contactDate: cell(row, c.CONTACT_DATE),
     contactName: cell(row, c.CONTACT_NAME),
     phone: cell(row, c.PHONE),
@@ -68,6 +93,7 @@ function mapRetail(row: string[], rowIndex: number): RetailAccount {
     website: cell(row, c.WEBSITE),
     status: toStatus(cell(row, c.STATUS)),
     nextSteps: cell(row, c.NEXT_STEPS),
+    nextActionType: "",
     contactDate: cell(row, c.CONTACT_DATE),
     contactName: cell(row, c.BUYER),
     phone: cell(row, c.PHONE),
@@ -91,6 +117,7 @@ function mapCatering(row: string[], rowIndex: number): CateringAccount {
     website: cell(row, c.WEBSITE),
     status: toStatus(cell(row, c.STATUS)),
     nextSteps: cell(row, c.NEXT_STEPS),
+    nextActionType: "",
     contactDate: cell(row, c.CONTACT_DATE),
     contactName: cell(row, c.CONTACT_NAME),
     phone: cell(row, c.PHONE),
@@ -114,6 +141,7 @@ function mapFoodTruck(row: string[], rowIndex: number): FoodTruckAccount {
     website: cell(row, c.WEBSITE),
     status: toStatus(cell(row, c.STATUS)),
     nextSteps: cell(row, c.NEXT_STEPS),
+    nextActionType: "",
     contactDate: cell(row, c.CONTACT_DATE),
     contactName: cell(row, c.CLIENT),
     phone: cell(row, c.PHONE),
@@ -137,6 +165,7 @@ function mapActiveAccount(row: string[], rowIndex: number): ActiveAccount {
     rsLead: cell(row, c.RS_LEAD),
     contactDate: cell(row, c.CONTACT_DATE),
     nextSteps: cell(row, c.NEXT_STEPS),
+    nextActionType: "",
     phone: cell(row, c.PHONE),
     email: cell(row, c.EMAIL),
     order: cell(row, c.ORDER),

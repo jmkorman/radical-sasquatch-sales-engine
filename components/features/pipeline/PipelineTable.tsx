@@ -214,7 +214,7 @@ export function PipelineTable({ data }: { data: AllTabsData }) {
   };
 
   const handleSubmitOutreach = async (outreachData: {
-    actionType: string; statusAfter: string; note: string; followUpDate: string;
+    actionType: string; statusAfter: string; note: string; followUpDate: string; nextActionType: string;
   }) => {
     if (!modalAccount) return;
     let log: ActivityLog;
@@ -229,6 +229,7 @@ export function PipelineTable({ data }: { data: AllTabsData }) {
         source: "manual",
         activityKind: "outreach",
         countsAsContact: true,
+        nextActionType: outreachData.nextActionType,
       });
     } catch {
       showActionFeedback("Couldn’t save that outreach entry to the online timeline.", "error");
@@ -262,19 +263,6 @@ export function PipelineTable({ data }: { data: AllTabsData }) {
     if (!response.ok) {
       showActionFeedback("Outreach was logged, but the pipeline row failed to update.", "error");
       return;
-    }
-
-    if (outreachData.followUpDate) {
-      void fetch("/api/notion/tasks", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          accountName: modalAccount.account,
-          contactName: modalAccount.contactName ?? "",
-          followUpDate: outreachData.followUpDate,
-          accountUrl: `${window.location.origin}/accounts/${modalAccount._tabSlug}/${modalAccount._rowIndex}`,
-        }),
-      }).catch(() => {});
     }
 
     await fetchAllTabs();

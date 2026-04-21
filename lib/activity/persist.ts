@@ -14,6 +14,7 @@ interface PersistActivityInput {
   source?: string;
   activityKind?: ActivityKind;
   countsAsContact?: boolean;
+  nextActionType?: string | null;
 }
 
 export async function persistActivityEntry(input: PersistActivityInput): Promise<ActivityLog> {
@@ -27,6 +28,7 @@ export async function persistActivityEntry(input: PersistActivityInput): Promise
     status_before: input.statusBefore ?? input.account.status ?? null,
     status_after: input.statusAfter ?? input.account.status ?? null,
     follow_up_date: input.followUpDate || null,
+    next_action_type: input.nextActionType || null,
     source: input.source ?? (input.actionType === "note" ? "internal" : "manual"),
     activity_kind: input.activityKind ?? (input.actionType === "note" ? "note" : "outreach"),
     counts_as_contact: input.countsAsContact ?? (input.actionType !== "note"),

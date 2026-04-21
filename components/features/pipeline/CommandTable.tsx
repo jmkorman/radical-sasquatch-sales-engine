@@ -9,17 +9,19 @@ import { LogOutreachModal } from "@/components/features/dashboard/LogOutreachMod
 import { useSheetStore } from "@/stores/useSheetStore";
 import { useUIStore } from "@/stores/useUIStore";
 import { parseActivityNote } from "@/lib/activity/notes";
-import { getLogsForAccount } from "@/lib/activity/timeline";
+import { getLatestContactLogForAccount, getLogsForAccount, getScheduledFollowUpLogForAccount } from "@/lib/activity/timeline";
 import { persistActivityEntry } from "@/lib/activity/persist";
 import { todayISO } from "@/lib/utils/dates";
 import {
   PIPELINE_STATUSES,
+  ACTIVE_PIPELINE_STATUSES,
   STATUS_PALETTE,
   STATUS_ORDER,
-  urgencyScore,
+  activityScore,
   formatContactPipeline,
   tempLabelPipeline,
   daysSincePipeline,
+  getContactAgeVisualPipeline,
   getForPipelineTab,
   getAllPipelineAccounts,
   PipelineTabName,
@@ -28,16 +30,20 @@ import { getAccountStableId, getLogStableId } from "@/lib/accounts/identity";
 import { StatusPill, StatusDot } from "./StatusIndicators";
 import { STATUS_VALUES } from "@/lib/utils/constants";
 
-type SortBy = "urgency" | "stale" | "name" | "recent";
+type SortBy = "active" | "stale" | "name" | "recent";
 
 const SORT_OPTIONS: { key: SortBy; label: string }[] = [
-  { key: "urgency", label: "Urgency" },
+  { key: "active", label: "Most Active" },
   { key: "stale",   label: "Most Stale" },
   { key: "name",    label: "A→Z" },
   { key: "recent",  label: "Recent" },
 ];
 
 const PIPELINE_TABS: PipelineTabName[] = ["All", "Restaurants", "Retail", "Catering", "Food Truck"];
+
+function getResolvedLastContactDate(account: AnyAccount, logs: ActivityLog[]): string {
+  return getLatestContactLogForAccount(logs, account)?.created_at || account.contactDate;
+}
 
 export function CommandTable({
   data,
@@ -49,7 +55,7 @@ export function CommandTable({
   const [activeTab, setActiveTab] = useState<PipelineTabName>("Restaurants");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
-  const [sortBy, setSortBy] = useState<SortBy>("urgency");
+  const [sortBy, setSortBy] = useState<SortBy>("active");
   const [selected, setSelected] = useState<AnyAccount | null>(null);
   const [modalAccount, setModalAccount] = useState<AnyAccount | null>(null);
   const [serverLogs, setServerLogs] = useState<ActivityLog[]>([]);
@@ -111,12 +117,21 @@ export function CommandTable({
     return [...list].sort((a, b) => {
       if (sortBy === "name") return a.account.localeCompare(b.account);
       if (sortBy === "stale")
-        return (daysSincePipeline(b.contactDate) ?? 999) - (daysSincePipeline(a.contactDate) ?? 999);
+        return (
+          (daysSincePipeline(getResolvedLastContactDate(b, serverLogs)) ?? 999) -
+          (daysSincePipeline(getResolvedLastContactDate(a, serverLogs)) ?? 999)
+        );
       if (sortBy === "recent")
-        return (daysSincePipeline(a.contactDate) ?? 999) - (daysSincePipeline(b.contactDate) ?? 999);
-      return urgencyScore(b) - urgencyScore(a); // urgency default
+        return (
+          (daysSincePipeline(getResolvedLastContactDate(a, serverLogs)) ?? 999) -
+          (daysSincePipeline(getResolvedLastContactDate(b, serverLogs)) ?? 999)
+        );
+      return (
+        activityScore(b, getResolvedLastContactDate(b, serverLogs)) -
+        activityScore(a, getResolvedLastContactDate(a, serverLogs))
+      ); // active default
     });
-  }, [all, search, statusFilter, sortBy, notesByAccountId]);
+  }, [all, search, statusFilter, sortBy, notesByAccountId, serverLogs]);
 
   const rowPad =
     tweaks.density === "compact" ? "8px 14px" : tweaks.density === "roomy" ? "18px 16px" : "12px 16px";
@@ -147,6 +162,7 @@ export function CommandTable({
     statusAfter: string;
     note: string;
     followUpDate: string;
+    nextActionType: string;
   }) => {
     if (!modalAccount) return;
     let log: ActivityLog;
@@ -161,6 +177,7 @@ export function CommandTable({
         source: "manual",
         activityKind: "outreach",
         countsAsContact: true,
+        nextActionType: outreachData.nextActionType,
       });
     } catch {
       showActionFeedback("Couldn't save outreach entry.", "error");
@@ -168,6 +185,16 @@ export function CommandTable({
     }
 
     setServerLogs((existing) => [log, ...existing]);
+
+    // Auto-clear any pending follow-up from previous logs
+    const pendingFollowUp = getScheduledFollowUpLogForAccount(serverLogs, modalAccount);
+    if (pendingFollowUp && pendingFollowUp.id !== log.id) {
+      void fetch("/api/activity", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: pendingFollowUp.id, follow_up_date: null }),
+      });
+    }
 
     const response = await fetch("/api/sheets/update", {
       method: "POST",
@@ -186,19 +213,6 @@ export function CommandTable({
       return;
     }
 
-    if (outreachData.followUpDate) {
-      void fetch("/api/notion/tasks", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          accountName: modalAccount.account,
-          contactName: modalAccount.contactName ?? "",
-          followUpDate: outreachData.followUpDate,
-          accountUrl: `${window.location.origin}/accounts/${modalAccount._tabSlug}/${modalAccount._rowIndex}`,
-        }),
-      }).catch(() => {});
-    }
-
     await fetchAllTabs();
     setModalAccount(null);
     showActionFeedback("Outreach logged.", "success");
@@ -211,7 +225,7 @@ export function CommandTable({
       gap: 16,
       minWidth: 0,
     }}>
-      <div>
+      <div style={{ minWidth: 0, overflow: "hidden" }}>
         {/* Sub-tabs */}
         <PipelineSubTabs value={activeTab} setValue={(t) => { setActiveTab(t); setSelected(null); setStatusFilter(""); }} counts={tabCounts} />
 
@@ -278,110 +292,179 @@ export function CommandTable({
         {/* Summary bar */}
         <div
           style={{
-            display: "flex",
-            gap: 0,
+            display: "grid",
+            gridTemplateColumns: `repeat(${ACTIVE_PIPELINE_STATUSES.length}, minmax(80px, 1fr))`,
+            gap: 8,
+            padding: 8,
             border: "1px solid rgba(73,48,140,0.6)",
             borderRadius: 14,
             marginBottom: 14,
-            overflow: "hidden",
-            background: "rgba(16,7,38,0.5)",
+            overflowX: "auto",
+            background: "linear-gradient(180deg, rgba(26,15,69,0.68), rgba(16,7,38,0.52))",
+            boxShadow: "inset 0 1px 0 rgba(255,255,255,0.04)",
           }}
         >
-          {PIPELINE_STATUSES.map((s, i) => {
+          {ACTIVE_PIPELINE_STATUSES.map((s) => {
             const n = statusCounts[s] || 0;
             const total = all.length || 1;
             const pct = (n / total) * 100;
             const c = STATUS_PALETTE[s];
+            const active = statusFilter === s;
             return (
-              <div
+              <button
                 key={s}
+                type="button"
+                onClick={() => {
+                  setStatusFilter(active ? "" : s);
+                  setSelected(null);
+                }}
+                aria-pressed={active}
                 style={{
-                  flex: `${Math.max(pct, 12)} 1 0`,
-                  padding: "12px 16px",
-                  borderRight:
-                    i < PIPELINE_STATUSES.length - 1 ? "1px solid rgba(73,48,140,0.5)" : "none",
+                  minHeight: 74,
+                  padding: "11px 12px 10px",
+                  borderRadius: 10,
+                  border: active
+                    ? `1px solid color-mix(in oklch, ${c.base} 70%, white)`
+                    : "1px solid rgba(73,48,140,0.48)",
+                  background: active
+                    ? `linear-gradient(180deg, ${c.base}30 0%, rgba(16,7,38,0.68) 100%)`
+                    : `linear-gradient(180deg, ${c.base}12 0%, rgba(16,7,38,0.42) 100%)`,
                   position: "relative",
                   overflow: "hidden",
+                  cursor: "pointer",
+                  textAlign: "left",
+                  fontFamily: "'Space Grotesk', sans-serif",
+                  boxShadow: active ? `0 0 0 1px ${c.glow}, 0 0 18px ${c.glow}` : "none",
+                  transition: "border-color 120ms ease, background 120ms ease, transform 120ms ease",
                 }}
+                onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.transform = "translateY(-1px)")}
+                onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.transform = "translateY(0)")}
               >
                 <div
                   style={{
                     position: "absolute",
-                    inset: 0,
-                    background: `linear-gradient(180deg, ${c.base}22 0%, transparent 100%)`,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    height: 3,
+                    background: "rgba(255,255,255,0.06)",
                     pointerEvents: "none",
                   }}
                 />
-                <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 8 }}>
-                  <StatusDot status={s} size={8} glow />
-                  <div>
+                <div
+                  style={{
+                    position: "absolute",
+                    left: 0,
+                    bottom: 0,
+                    height: 3,
+                    width: `${Math.max(5, pct)}%`,
+                    maxWidth: "100%",
+                    background: c.base,
+                    boxShadow: `0 0 10px ${c.glow}`,
+                    pointerEvents: "none",
+                  }}
+                />
+                <div
+                  style={{
+                    position: "relative",
+                    display: "flex",
+                    alignItems: "flex-start",
+                    justifyContent: "space-between",
+                    gap: 10,
+                  }}
+                >
+                  <div style={{ minWidth: 0 }}>
                     <div
                       style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 7,
+                        minHeight: 28,
+                      }}
+                    >
+                      <StatusDot status={s} size={8} glow />
+                      <span
+                        style={{
+                          fontSize: 10,
+                          letterSpacing: "0.14em",
+                          lineHeight: 1.25,
+                          color: c.ink,
+                          textTransform: "uppercase",
+                          fontWeight: 700,
+                        }}
+                      >
+                        {s}
+                      </span>
+                    </div>
+                    <div
+                      style={{
+                        marginTop: 7,
                         fontSize: 10,
-                        letterSpacing: 0.5,
+                        letterSpacing: "0.16em",
                         color: c.ink,
                         textTransform: "uppercase",
                         fontWeight: 600,
-                        opacity: 0.85,
+                        opacity: 0.62,
                       }}
                     >
-                      {s}
-                    </div>
-                    <div
-                      style={{
-                        fontSize: 20,
-                        fontWeight: 800,
-                        color: "#fff4e8",
-                        fontFamily: "'Space Grotesk', sans-serif",
-                      }}
-                    >
-                      {n}
+                      {pct.toFixed(0)}%
                     </div>
                   </div>
+                  <div
+                    style={{
+                      fontSize: 24,
+                      fontWeight: 900,
+                      color: "#fff4e8",
+                      lineHeight: 1,
+                      fontFamily: "'Space Grotesk', sans-serif",
+                    }}
+                  >
+                    {n}
+                  </div>
                 </div>
-              </div>
+              </button>
             );
           })}
         </div>
 
-        {/* Header row */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "6px minmax(200px, 1.5fr) minmax(120px, 160px) minmax(100px, 130px) minmax(250px, 1.8fr)",
-            gap: 0,
-            padding: "8px 16px 8px 22px",
-            fontSize: 10,
-            letterSpacing: "0.32em",
-            color: "#8c7fbd",
-            textTransform: "uppercase",
-            fontWeight: 700,
-            background: "rgba(16,7,38,0.4)",
-            border: "1px solid rgba(73,48,140,0.5)",
-            borderBottom: "none",
-            borderRadius: "12px 12px 0 0",
-          }}
-        >
-          <span />
-          <span>Account</span>
-          <span>Stage</span>
-          <span>Last Touch</span>
-          <span>Latest Note</span>
-        </div>
+        {/* Header + Rows — shared horizontal scroll wrapper */}
+        <div style={{
+          overflowX: "auto",
+          border: "1px solid rgba(73,48,140,0.5)",
+          borderRadius: 14,
+        }}>
+          <div style={{ minWidth: 720 }}>
+            {/* Header row */}
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "6px minmax(200px, 1.5fr) 155px 120px minmax(260px, 1.8fr)",
+                gap: 0,
+                padding: "8px 16px 8px 22px",
+                fontSize: 10,
+                letterSpacing: "0.32em",
+                color: "#8c7fbd",
+                textTransform: "uppercase",
+                fontWeight: 700,
+                background: "rgba(16,7,38,0.4)",
+                borderBottom: "1px solid rgba(73,48,140,0.5)",
+              }}
+            >
+              <span />
+              <span>Account</span>
+              <span>Stage</span>
+              <span>Last Contact</span>
+              <span>Latest Note</span>
+            </div>
 
-        {/* Rows */}
-        <div
-          style={{
-            border: "1px solid rgba(73,48,140,0.5)",
-            borderTop: "none",
-            borderRadius: "0 0 14px 14px",
-            overflow: "auto",
-            overflowY: "auto",
-            overflowX: "auto",
-            background: "rgba(16,7,38,0.35)",
-            maxHeight: "70vh",
-          }}
-        >
+            {/* Rows */}
+            <div
+              style={{
+                overflowY: "auto",
+                background: "rgba(16,7,38,0.35)",
+                maxHeight: "70vh",
+              }}
+            >
           {rows.map((account, i) => {
             const isSel =
               selected !== null &&
@@ -398,6 +481,7 @@ export function CommandTable({
                 rowPad={rowPad}
                 lastOfList={i === rows.length - 1}
                 serverLogs={serverLogs}
+                onStatusChange={handleStatusChange}
               />
             );
           })}
@@ -406,6 +490,8 @@ export function CommandTable({
               No accounts match your filters.
             </div>
           )}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -591,6 +677,7 @@ function TableRow({
   rowPad,
   lastOfList,
   serverLogs,
+  onStatusChange,
 }: {
   account: AnyAccount;
   selected: boolean;
@@ -599,8 +686,9 @@ function TableRow({
   rowPad: string;
   lastOfList: boolean;
   serverLogs: ActivityLog[];
+  onStatusChange: (account: AnyAccount, newStatus: string) => void;
 }) {
-  const touch = formatContactPipeline(account.contactDate);
+  const touch = formatContactPipeline(getResolvedLastContactDate(account, serverLogs));
   const c = STATUS_PALETTE[account.status] ?? STATUS_PALETTE[""];
   const loud = tweaks.urgency === "loud";
 
@@ -613,7 +701,7 @@ function TableRow({
       onClick={onSelect}
       style={{
         display: "grid",
-        gridTemplateColumns: "6px minmax(260px, 1.8fr) 160px 130px minmax(350px, 2fr)",
+        gridTemplateColumns: "6px minmax(200px, 1.5fr) 155px 120px minmax(260px, 1.8fr)",
         gap: 0,
         alignItems: "center",
         background: selected
@@ -672,12 +760,37 @@ function TableRow({
         </div>
       </div>
 
-      {/* Stage */}
-      <div style={{ padding: rowPad }}>
-        <StatusPill status={account.status} />
+      {/* Stage — click to change inline */}
+      <div style={{ padding: rowPad, position: "relative" }} onClick={(e) => e.stopPropagation()}>
+        <select
+          value={account.status || ""}
+          onChange={(e) => onStatusChange(account, e.target.value)}
+          style={{
+            appearance: "none",
+            WebkitAppearance: "none",
+            background: c.base + "22",
+            border: `1px solid ${c.base}66`,
+            color: c.ink,
+            borderRadius: 999,
+            padding: "3px 10px",
+            fontSize: 11,
+            fontWeight: 700,
+            fontFamily: "'Space Grotesk', sans-serif",
+            textTransform: "uppercase",
+            letterSpacing: 0.4,
+            cursor: "pointer",
+            outline: "none",
+            width: "100%",
+            maxWidth: 140,
+          }}
+        >
+          {STATUS_VALUES.filter((s) => s !== "").map((s) => (
+            <option key={s} value={s} style={{ background: "#1a0f45", color: "#fff4e8" }}>{s}</option>
+          ))}
+        </select>
       </div>
 
-      {/* Last touch */}
+      {/* Last contact */}
       <div style={{ padding: rowPad }}>
         <TempBarWithLabel days={touch.days} label={touch.label} loud={loud} />
       </div>
@@ -702,15 +815,7 @@ function TableRow({
 }
 
 function TempBarWithLabel({ days, label, loud }: { days: number | null; label: string; loud: boolean }) {
-  // Color bracket based on age
-  const color =
-    days === null ? "#8c7fbd"
-    : days <= 2   ? "#4ade80"
-    : days <= 7   ? "#86efac"
-    : days <= 14  ? "#fbbf24"
-    : "#ff7c70";
-  // Bar starts full when fresh, depletes as days increase (21d = empty)
-  const filled = days === null ? 0 : Math.max(0, Math.min(10, Math.round(10 - (days / 21) * 10)));
+  const { color, filledSegments } = getContactAgeVisualPipeline(days);
 
   return (
     <div>
@@ -724,22 +829,20 @@ function TempBarWithLabel({ days, label, loud }: { days: number | null; label: s
       >
         {label}
       </div>
-      {(filled > 0 || days !== null) && (
-        <div style={{ marginTop: 4, display: "flex", gap: 2, alignItems: "center" }}>
-          {[...Array(10)].map((_, i) => (
-            <span
-              key={i}
-              style={{
-                width: loud ? 6 : 4,
-                height: loud ? 6 : 4,
-                borderRadius: 1,
-                background: i < filled ? color : "rgba(73,48,140,0.4)",
-                boxShadow: loud && i < filled ? `0 0 4px ${color}` : "none",
-              }}
-            />
-          ))}
-        </div>
-      )}
+      <div style={{ marginTop: 4, display: "flex", gap: 2, alignItems: "center" }}>
+        {[...Array(10)].map((_, i) => (
+          <span
+            key={i}
+            style={{
+              width: loud ? 6 : 4,
+              height: loud ? 6 : 4,
+              borderRadius: 1,
+              background: i < filledSegments ? color : "rgba(156,163,175,0.22)",
+              boxShadow: loud && i < filledSegments ? `0 0 4px ${color}` : "none",
+            }}
+          />
+        ))}
+      </div>
     </div>
   );
 }
@@ -758,43 +861,16 @@ function SidePanel({
   onLogOutreach: () => void;
   onStatusChange: (account: AnyAccount, newStatus: string) => void;
 }) {
-  const touch = formatContactPipeline(account.contactDate);
+  const touch = formatContactPipeline(getResolvedLastContactDate(account, serverLogs));
   const temp = tempLabelPipeline(touch.days);
   const c = STATUS_PALETTE[account.status] ?? STATUS_PALETTE[""];
   const accountLogs = getLogsForAccount(serverLogs, account).filter(
     (l) => l.activity_kind !== "note"
   );
 
-  const tempColor =
-    temp.tone === "hot"
-      ? "#64f5ea"
-      : temp.tone === "warm"
-      ? "#ffb321"
-      : temp.tone === "cool"
-      ? "#ffd700"
-      : temp.tone === "grey"
-      ? "#8c7fbd"
-      : "#ff7c70";
-  const tempBg =
-    temp.tone === "hot"
-      ? "rgba(100,245,234,0.14)"
-      : temp.tone === "warm"
-      ? "rgba(255,179,33,0.14)"
-      : temp.tone === "cool"
-      ? "rgba(255,215,0,0.14)"
-      : temp.tone === "grey"
-      ? "rgba(140,127,189,0.14)"
-      : "rgba(255,124,112,0.14)";
-  const tempBorder =
-    temp.tone === "hot"
-      ? "rgba(100,245,234,0.35)"
-      : temp.tone === "warm"
-      ? "rgba(255,179,33,0.35)"
-      : temp.tone === "cool"
-      ? "rgba(255,215,0,0.35)"
-      : temp.tone === "grey"
-      ? "rgba(140,127,189,0.35)"
-      : "rgba(255,124,112,0.35)";
+  const tempColor = getContactAgeVisualPipeline(touch.days).color;
+  const tempBg = `${tempColor}24`;
+  const tempBorder = `${tempColor}66`;
 
   return (
     <div

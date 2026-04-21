@@ -11,9 +11,6 @@ export function parseAppDate(dateStr: string): Date | null {
     return new Date(parseInt(isoMatch[1]), parseInt(isoMatch[2]) - 1, parseInt(isoMatch[3]));
   }
 
-  const native = new Date(trimmed);
-  if (!isNaN(native.getTime())) return native;
-
   const monthDayMatch = trimmed.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?$/);
   if (monthDayMatch) {
     const now = new Date();
@@ -27,7 +24,35 @@ export function parseAppDate(dateStr: string): Date | null {
     if (!isNaN(parsed.getTime())) return parsed;
   }
 
+  const namedMonthMatch = trimmed.match(
+    /^(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+(\d{1,2})(?:,?\s+(\d{2,4}))?$/i
+  );
+  if (namedMonthMatch) {
+    const months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+    const month = months.findIndex((m) => namedMonthMatch[1].toLowerCase().startsWith(m));
+    const day = parseInt(namedMonthMatch[2], 10);
+    let year = namedMonthMatch[3] ? parseInt(namedMonthMatch[3], 10) : new Date().getFullYear();
+
+    if (year < 100) year += 2000;
+
+    const parsed = new Date(year, month, day);
+    if (!isNaN(parsed.getTime())) return parsed;
+  }
+
+  const native = new Date(trimmed);
+  if (!isNaN(native.getTime())) return native;
+
   return null;
+}
+
+function startOfLocalDay(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+export function calendarDaysBetween(from: Date, to = new Date()): number {
+  const fromDay = startOfLocalDay(from);
+  const toDay = startOfLocalDay(to);
+  return Math.floor((toDay.getTime() - fromDay.getTime()) / (1000 * 60 * 60 * 24));
 }
 
 export function dateToTimestamp(dateStr: string): number {
@@ -39,9 +64,7 @@ export function daysSince(dateStr: string): number {
   if (!dateStr) return Infinity;
   const date = parseAppDate(dateStr);
   if (!date) return Infinity;
-  const now = new Date();
-  const diff = now.getTime() - date.getTime();
-  return Math.floor(diff / (1000 * 60 * 60 * 24));
+  return calendarDaysBetween(date);
 }
 
 export function isOverdue(dateStr: string): boolean {
@@ -68,13 +91,16 @@ export function formatDateShort(date: Date | string): string {
 }
 
 export function todayISO(): string {
-  return new Date().toISOString().split("T")[0];
+  const now = new Date();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${now.getFullYear()}-${month}-${day}`;
 }
 
 // Format as "M/DD" for Google Sheets (e.g., "4/15")
 export function formatDateForSheet(date: Date | string): string {
-  const d = typeof date === "string" ? new Date(date) : date;
-  if (isNaN(d.getTime())) return "";
+  const d = typeof date === "string" ? parseAppDate(date) : date;
+  if (!d || isNaN(d.getTime())) return "";
   const month = d.getMonth() + 1;
   const day = String(d.getDate()).padStart(2, "0");
   return `${month}/${day}`;

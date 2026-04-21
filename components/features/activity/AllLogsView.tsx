@@ -2,14 +2,18 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { ActivityLog } from "@/types/activity";
+import { AnyAccount, AllTabsData } from "@/types/accounts";
 import { Card } from "@/components/ui/Card";
 import { SearchBar } from "@/components/ui/SearchBar";
 import { Select } from "@/components/ui/Select";
 import { Spinner } from "@/components/ui/Spinner";
 import { ActivityLogList } from "@/components/features/accounts/ActivityLog";
+import { LogOutreachModal } from "@/components/features/dashboard/LogOutreachModal";
 import { parseActivityNote } from "@/lib/activity/notes";
 import { Button } from "@/components/ui/Button";
 import { useTrashStore } from "@/stores/useTrashStore";
+import { useSheetStore } from "@/stores/useSheetStore";
+import { useUIStore } from "@/stores/useUIStore";
 // deletedLogs from localStorage used only for the unloaded badge count
 
 const ACTION_OPTIONS = [
@@ -17,6 +21,8 @@ const ACTION_OPTIONS = [
   { value: "call", label: "Calls" },
   { value: "email", label: "Emails" },
   { value: "in-person", label: "In-Person" },
+  { value: "sample-sent", label: "Samples Sent" },
+  { value: "tasting-complete", label: "Tastings" },
   { value: "note", label: "Notes" },
 ];
 
@@ -25,6 +31,18 @@ function formatTabLabel(tab: string) {
     .split("-")
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+function getAccountFromLog(data: AllTabsData, log: ActivityLog): AnyAccount | null {
+  const tabMap: Record<string, AnyAccount[]> = {
+    restaurants: data.restaurants,
+    retail: data.retail,
+    catering: data.catering,
+    "food-truck": data.foodTruck,
+    "active-accounts": data.activeAccounts,
+  };
+  const accounts = tabMap[log.tab] ?? [];
+  return accounts.find((a) => a._rowIndex === log.row_index) ?? null;
 }
 
 export function AllLogsView() {
@@ -36,7 +54,11 @@ export function AllLogsView() {
   const [actionFilter, setActionFilter] = useState("all");
   const [tabFilter, setTabFilter] = useState("all");
   const [showTrash, setShowTrash] = useState(false);
+  const [editingOutreachLog, setEditingOutreachLog] = useState<ActivityLog | null>(null);
+  const [editingOutreachAccount, setEditingOutreachAccount] = useState<AnyAccount | null>(null);
   const deletedLogs = useTrashStore((state) => state.deletedLogs);
+  const { data } = useSheetStore();
+  const showActionFeedback = useUIStore((state) => state.showActionFeedback);
   const mergedLogs = logs;
 
   async function loadLogs() {
@@ -59,6 +81,44 @@ export function AllLogsView() {
       body: JSON.stringify({ id: log.id, follow_up_date: newDate }),
     });
     if (!res.ok) throw new Error("Failed to update follow-up date");
+    await loadLogs();
+  }
+
+  function handleEditOutreach(log: ActivityLog) {
+    if (!data) return;
+    const account = getAccountFromLog(data, log);
+    if (!account) return;
+    setEditingOutreachLog(log);
+    setEditingOutreachAccount(account);
+  }
+
+  async function handleUpdateOutreachLog(formData: {
+    actionType: string;
+    statusAfter: string;
+    note: string;
+    followUpDate: string;
+    nextActionType: string;
+  }) {
+    if (!editingOutreachLog) return;
+    const res = await fetch("/api/activity", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: editingOutreachLog.id,
+        action_type: formData.actionType,
+        note: formData.note,
+        status_before: editingOutreachLog.status_before,
+        status_after: formData.statusAfter,
+        follow_up_date: formData.followUpDate || null,
+        next_action_type: formData.nextActionType || null,
+        activity_kind: "outreach",
+        counts_as_contact: true,
+      }),
+    });
+    if (!res.ok) throw new Error("Failed to update outreach");
+    setEditingOutreachLog(null);
+    setEditingOutreachAccount(null);
+    showActionFeedback("Outreach updated.", "success");
     await loadLogs();
   }
 
@@ -128,6 +188,17 @@ export function AllLogsView() {
   }).length;
 
   return (
+    <>
+    {editingOutreachLog && editingOutreachAccount && (
+      <LogOutreachModal
+        account={editingOutreachAccount}
+        initialLog={editingOutreachLog}
+        title={`Edit Outreach - ${editingOutreachAccount.account}`}
+        submitLabel="Save Outreach"
+        onClose={() => { setEditingOutreachLog(null); setEditingOutreachAccount(null); }}
+        onSubmit={handleUpdateOutreachLog}
+      />
+    )}
     <div className="space-y-6">
       <div>
         <div className="mb-2 text-[11px] uppercase tracking-[0.4em] text-rs-sunset/85">
@@ -206,9 +277,12 @@ export function AllLogsView() {
             showDeleted={showTrash}
             onServerLogsChanged={showTrash ? loadTrashLogs : loadLogs}
             onEditFollowUp={handleEditFollowUp}
+            onEditOutreach={handleEditOutreach}
+            editAllWithOutreachModal
           />
         )}
       </Card>
     </div>
+    </>
   );
 }

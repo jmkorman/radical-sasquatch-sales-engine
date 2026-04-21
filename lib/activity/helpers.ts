@@ -1,6 +1,6 @@
 import { ActionType, ActivityKind, ActivityLog } from "@/types/activity";
 
-const OUTREACH_ACTIONS: ActionType[] = ["call", "email", "in-person"];
+const OUTREACH_ACTIONS: ActionType[] = ["call", "email", "in-person", "sample-sent", "tasting-complete"];
 
 export function getActivityKind(log: Pick<ActivityLog, "action_type" | "source" | "activity_kind">): ActivityKind {
   if (log.activity_kind) return log.activity_kind;

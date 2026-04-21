@@ -15,7 +15,6 @@ import Link from "next/link";
 import { countsAsContact } from "@/lib/activity/helpers";
 import { getOrderStats } from "@/lib/orders/helpers";
 import { useUIStore } from "@/stores/useUIStore";
-import { getAccountHealth } from "@/lib/accounts/health";
 
 function ActiveAccountsPageContent() {
   const searchParams = useSearchParams();
@@ -283,7 +282,6 @@ function ActiveAccountsPageContent() {
       if (!focus) return true;
 
       const accountId = `${account._tabSlug}_${account._rowIndex}`;
-      const health = getAccountHealth(account, mergedLogs);
       const followUpDate = nextFollowUpByAccount[accountId];
       const parsedFollowUp = followUpDate ? new Date(followUpDate) : null;
       const today = new Date();
@@ -297,9 +295,6 @@ function ActiveAccountsPageContent() {
       }
       if (focus === "upcoming-followup") {
         return Boolean(parsedFollowUp && parsedFollowUp.getTime() > today.getTime());
-      }
-      if (focus === "health-critical") {
-        return health.tone === "critical" || health.tone === "at-risk";
       }
       if (focus === "buyers") {
         return (ordersByAccount[accountId]?.length ?? 0) > 0;
@@ -318,7 +313,7 @@ function ActiveAccountsPageContent() {
       }
       return dateToTimestamp(b.contactDate) - dateToTimestamp(a.contactDate);
     });
-  }, [accounts, focus, mergedLogs, nextFollowUpByAccount, ordersByAccount, pendingDeleteIds, search, sortBy]);
+  }, [accounts, focus, nextFollowUpByAccount, ordersByAccount, pendingDeleteIds, search, sortBy]);
 
   const orderTotal = useMemo(
     () =>
@@ -329,18 +324,6 @@ function ActiveAccountsPageContent() {
       }, 0),
     [visibleAccounts]
   );
-
-  const healthSummary = useMemo(() => {
-    const critical = visibleAccounts.filter((account) => {
-      const health = getAccountHealth(account, mergedLogs);
-      return health.tone === "critical" || health.tone === "at-risk";
-    }).length;
-
-    return {
-      critical,
-      healthy: visibleAccounts.filter((account) => getAccountHealth(account, mergedLogs).tone === "healthy").length,
-    };
-  }, [mergedLogs, visibleAccounts]);
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
@@ -397,14 +380,10 @@ function ActiveAccountsPageContent() {
         </div>
       ) : (
         <div className="space-y-5">
-          <div className="grid gap-3 md:grid-cols-4">
+          <div className="grid gap-3 md:grid-cols-3">
             <div className="rounded-2xl border border-rs-border/70 bg-white/5 p-4">
               <div className="text-[11px] uppercase tracking-[0.3em] text-[#af9fe6]">Active Deals</div>
               <div className="mt-2 text-3xl font-black text-rs-cream">{visibleAccounts.length}</div>
-            </div>
-            <div className="rounded-2xl border border-rs-border/70 bg-white/5 p-4">
-              <div className="text-[11px] uppercase tracking-[0.3em] text-[#af9fe6]">Health Risk</div>
-              <div className="mt-2 text-3xl font-black text-[#ffd6e8]">{healthSummary.critical}</div>
             </div>
             <div className="rounded-2xl border border-rs-border/70 bg-white/5 p-4">
               <div className="text-[11px] uppercase tracking-[0.3em] text-[#af9fe6]">Needs Follow Up</div>
@@ -460,7 +439,6 @@ function ActiveAccountsPageContent() {
                 <th className="text-left py-3 px-4 text-rs-gold font-semibold">Account</th>
                 <th className="text-left py-3 px-4 text-rs-gold font-semibold">Contact</th>
                 <th className="text-left py-3 px-4 text-rs-gold font-semibold">Status</th>
-                <th className="text-left py-3 px-4 text-rs-gold font-semibold">Health</th>
                 <th className="text-left py-3 px-4 text-rs-gold font-semibold">Next Steps</th>
                 <th className="text-left py-3 px-4 text-rs-gold font-semibold">Last Contact</th>
                 <th className="text-left py-3 px-4 text-rs-gold font-semibold">Next Follow-Up</th>
@@ -479,7 +457,6 @@ function ActiveAccountsPageContent() {
                 const followUpDate = nextFollowUpByAccount[accountId];
                 const stats = getOrderStats(ordersByAccount[accountId] ?? []);
                 const displayLastContact = latestContact?.created_at || account.contactDate;
-                const health = getAccountHealth(account, mergedLogs);
 
                 return (
                   <tr
@@ -563,23 +540,6 @@ function ActiveAccountsPageContent() {
                         />
                       </div>
                     )}
-                  </td>
-
-                  <td className="py-3 px-4">
-                    <div
-                      className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold ${
-                        health.tone === "healthy"
-                          ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-100"
-                          : health.tone === "watch"
-                            ? "border-yellow-400/30 bg-yellow-400/10 text-yellow-100"
-                            : health.tone === "at-risk"
-                              ? "border-orange-400/30 bg-orange-400/10 text-orange-100"
-                              : "border-rs-punch/40 bg-rs-punch/10 text-[#ffd6e8]"
-                      }`}
-                      title={health.reasons.join(" · ") || "Account looks healthy"}
-                    >
-                      {health.label} · {health.score}
-                    </div>
                   </td>
 
                   {/* Next Steps - Editable */}

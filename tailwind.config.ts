@@ -9,6 +9,12 @@ const config: Config = {
   ],
   safelist: [
     "bg-status-identified",
+    "bg-status-reached",
+    "bg-status-connected",
+    "bg-status-sample",
+    "bg-status-tasting",
+    "bg-status-decision",
+    // Legacy
     "bg-status-researched",
     "bg-status-contacted",
     "bg-status-following",
@@ -26,11 +32,18 @@ const config: Config = {
         "rs-punch": "#ff4f9f",
         "rs-sunset": "#ffb321",
         "rs-cream": "#fff4e8",
+        // Current stages
         "status-identified": "#6f64a8",
+        "status-reached":    "#4d8cff",
+        "status-connected":  "#ffb321",
+        "status-sample":     "#64f5ea",
+        "status-tasting":    "#a78bfa",
+        "status-decision":   "#f97316",
+        // Legacy stages
         "status-researched": "#4d8cff",
-        "status-contacted": "#ffb321",
-        "status-following": "#ff7c70",
-        "status-won": "#44d39f",
+        "status-contacted":  "#ffb321",
+        "status-following":  "#ff7c70",
+        "status-won":        "#44d39f",
       },
       fontFamily: {
         sans: ["var(--font-geist-sans)", "system-ui", "sans-serif"],

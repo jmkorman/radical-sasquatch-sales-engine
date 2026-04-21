@@ -1,4 +1,4 @@
-export type ActionType = "call" | "email" | "in-person" | "note";
+export type ActionType = "call" | "email" | "in-person" | "note" | "sample-sent" | "tasting-complete";
 export type ActivitySource = "manual" | "local" | "internal" | "research" | "order" | "notion";
 export type ActivityKind = "outreach" | "note" | "research" | "order";
 
@@ -14,6 +14,7 @@ export interface ActivityLog {
   status_after: string | null;
   follow_up_date: string | null;
   notion_task_id: string | null;
+  next_action_type?: string | null;
   source: ActivitySource | string;
   created_at: string;
   activity_kind?: ActivityKind;

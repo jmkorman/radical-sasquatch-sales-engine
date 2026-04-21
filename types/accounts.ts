@@ -2,11 +2,21 @@ export type TabName = "Restaurants" | "Retail" | "Catering" | "Food Truck" | "Ac
 export type TabSlug = "restaurants" | "retail" | "catering" | "food-truck" | "active-accounts";
 
 export type StatusValue =
+  // Current stages
   | "Identified"
+  | "Reached Out"
+  | "Connected"
+  | "Sample Sent"
+  | "Tasting Complete"
+  | "Decision Pending"
+  | "Backburner"
+  | "Not a Fit"
+  // Legacy stages (kept for backward compat with existing sheet data)
   | "Researched"
   | "Contacted"
   | "Following Up"
   | "Closed - Won"
+  | "Not Interested"
   | "";
 
 export interface BaseAccount {
@@ -18,6 +28,7 @@ export interface BaseAccount {
   location: string;
   status: StatusValue;
   nextSteps: string;
+  nextActionType: string; // structured action type: "follow-up-call", "send-sample", etc.
   contactDate: string; // "Contact" column = date of last contact
   contactName: string; // "Contact Name" / "Buyer" / "Client"
   phone: string;
@@ -62,6 +73,7 @@ export interface ActiveAccount {
   rsLead: string;
   contactDate: string;
   nextSteps: string;
+  nextActionType: string;
   phone: string;
   email: string;
   order: string;

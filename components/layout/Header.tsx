@@ -41,7 +41,7 @@ export function Header() {
                 Sales Engine
               </h1>
               <p className="hidden text-xs text-[#d8ccfb] md:block">
-                Daily control center for outreach, follow up, and wins
+                Dashboard for outreach, follow-up, and wins
               </p>
             </div>
           </Link>

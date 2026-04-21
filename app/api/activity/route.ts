@@ -40,10 +40,15 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: "id is required" }, { status: 400 });
     }
     const log = await updateActivityLog(body.id, {
+      action_type: body.action_type,
       follow_up_date: body.follow_up_date,
       note: body.note,
       status_before: body.status_before,
       status_after: body.status_after,
+      next_action_type: body.next_action_type,
+      source: body.source,
+      activity_kind: body.activity_kind,
+      counts_as_contact: body.counts_as_contact,
       ...(body.is_deleted !== undefined ? { is_deleted: body.is_deleted } : {}),
     });
     return NextResponse.json(log);
