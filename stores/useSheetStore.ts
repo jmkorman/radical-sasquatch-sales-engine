@@ -35,13 +35,13 @@ export const useSheetStore = create<SheetStore>((set, get) => ({
 
     try {
       const res = await fetch("/api/sheets", { cache: "no-store" });
-      if (!res.ok) throw new Error("Failed to fetch sheets");
+      if (!res.ok) throw new Error("Failed to fetch account data");
       const data = await res.json();
       set({ data, lastSynced: new Date(), syncStatus: "idle" });
     } catch {
       if (!silent) {
         set({ syncStatus: "error" });
-        useUIStore.getState().showActionFeedback("Couldn’t refresh data from Google Sheets.", "error");
+        useUIStore.getState().showActionFeedback("Couldn’t refresh account data.", "error");
       }
     }
   },
@@ -60,13 +60,13 @@ export const useSheetStore = create<SheetStore>((set, get) => ({
         body: JSON.stringify({ tab, rowIndex, newStatus, contactDate, nextSteps }),
       });
 
-      if (!res.ok) throw new Error("Failed to update sheet");
+      if (!res.ok) throw new Error("Failed to update account");
 
       // Refetch to get fresh data
       await get().fetchAllTabs();
     } catch {
       set({ data: prev, syncStatus: "error" });
-      useUIStore.getState().showActionFeedback("Couldn’t save that sheet update.", "error");
+      useUIStore.getState().showActionFeedback("Couldn’t save that account update.", "error");
     }
   },
 }));

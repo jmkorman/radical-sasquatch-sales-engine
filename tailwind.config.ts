@@ -26,6 +26,7 @@ const config: Config = {
         "rs-bg": "#100726",
         "rs-surface": "#1a0f45",
         "rs-surface-2": "#25145f",
+        "rs-cyan": "#64f5ea",
         "rs-gold": "#64f5ea",
         "rs-gold-dark": "#34ddd2",
         "rs-border": "#49308c",

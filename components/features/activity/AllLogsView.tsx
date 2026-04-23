@@ -275,6 +275,7 @@ export function AllLogsView() {
           <ActivityLogList
             logs={filteredLogs}
             showDeleted={showTrash}
+            showAccountName
             onServerLogsChanged={showTrash ? loadTrashLogs : loadLogs}
             onEditFollowUp={handleEditFollowUp}
             onEditOutreach={handleEditOutreach}

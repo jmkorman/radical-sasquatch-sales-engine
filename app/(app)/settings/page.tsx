@@ -1,15 +1,42 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { useSheetStore } from "@/stores/useSheetStore";
 import { CHANNEL_URGENCY_THRESHOLDS } from "@/lib/utils/constants";
 
+type EnvStatus = {
+  googleSheets: boolean;
+  supabase: boolean;
+  gmail: boolean;
+};
+
 export default function SettingsPage() {
   const { fetchAllTabs, syncStatus } = useSheetStore();
   const [connecting, setConnecting] = useState(false);
   const [gmailUrl, setGmailUrl] = useState<string | null>(null);
+  const [envStatus, setEnvStatus] = useState<EnvStatus | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadEnvStatus() {
+      try {
+        const res = await fetch("/api/env/status", { cache: "no-store" });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled) setEnvStatus(data);
+      } catch {
+        if (!cancelled) setEnvStatus(null);
+      }
+    }
+
+    loadEnvStatus();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function handleConnectGmail() {
     setConnecting(true);
@@ -152,10 +179,13 @@ GMAIL_REDIRECT_URI=http://localhost:3000/api/gmail/auth`}
       {/* Environment Status */}
       <Card>
         <h3 className="text-lg font-semibold text-white mb-3">Environment Status</h3>
+        <p className="mb-3 text-sm text-gray-400">
+          Checked server-side so private keys and service credentials show accurately without exposing them.
+        </p>
         <div className="text-sm space-y-2">
-          <EnvRow label="Google Sheets" envKey="NEXT_PUBLIC_GOOGLE_SHEET_ID" />
-          <EnvRow label="Supabase" envKey="NEXT_PUBLIC_SUPABASE_URL" />
-          <EnvRow label="Gmail Client ID" envKey="GMAIL_CLIENT_ID" />
+          <EnvRow label="Google Sheets" configured={envStatus?.googleSheets} />
+          <EnvRow label="Supabase" configured={envStatus?.supabase} />
+          <EnvRow label="Gmail Tracking" configured={envStatus?.gmail} />
         </div>
       </Card>
     </div>
@@ -171,13 +201,7 @@ function Threshold({ label, days, color }: { label: string; days: number; color:
   );
 }
 
-function EnvRow({ label, envKey }: { label: string; envKey: string }) {
-  // We can only check NEXT_PUBLIC_ vars client-side
-  const isPublic = envKey.startsWith("NEXT_PUBLIC_");
-  const configured = isPublic
-    ? Boolean(process.env[envKey as keyof typeof process.env])
-    : null; // server-only vars can't be checked client-side
-
+function EnvRow({ label, configured }: { label: string; configured: boolean | undefined }) {
   return (
     <div className="flex items-center justify-between">
       <span className="text-gray-400">{label}</span>
@@ -190,7 +214,7 @@ function EnvRow({ label, envKey }: { label: string; envKey: string }) {
             : "bg-rs-surface/60 text-[#8c7fbd]"
         }`}
       >
-        {configured === true ? "Connected" : configured === false ? "Not set" : "Server-side"}
+        {configured === true ? "Connected" : configured === false ? "Not set" : "Checking..."}
       </span>
     </div>
   );

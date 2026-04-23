@@ -54,6 +54,20 @@ export async function updateCells(
   }
 }
 
+export async function appendRow(tabName: string, values: string[]): Promise<string | null> {
+  const sheets = getSheetsClient();
+
+  const response = await sheets.spreadsheets.values.append({
+    spreadsheetId: getSheetId(),
+    range: `'${tabName}'!A:Z`,
+    valueInputOption: "RAW",
+    insertDataOption: "INSERT_ROWS",
+    requestBody: { values: [values] },
+  });
+
+  return response.data.updates?.updatedRange ?? null;
+}
+
 export async function deleteRow(tabName: string, rowIndex: number): Promise<void> {
   const sheets = getSheetsClient();
   const spreadsheetId = getSheetId();

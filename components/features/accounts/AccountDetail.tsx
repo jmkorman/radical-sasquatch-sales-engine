@@ -110,6 +110,14 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
     productionNotes: "",
     amount: "",
   });
+  const latestGmailThread = gmailThreads[0] ?? null;
+  const latestGmailDate = latestGmailThread?.latestMessageDate
+    ? new Date(latestGmailThread.latestMessageDate)
+    : null;
+  const latestGmailFromAccount =
+    latestGmailThread && detailDraft.email
+      ? latestGmailThread.from.toLowerCase().includes(detailDraft.email.toLowerCase())
+      : false;
 
   useEffect(() => {
     async function loadOrders() {
@@ -861,6 +869,42 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
               }}
             />
           </div>
+
+          <Card>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="text-[11px] uppercase tracking-[0.3em] text-[#af9fe6]">Email Signal</div>
+                <div className="mt-1 text-sm text-[#d8ccfb]">
+                  {loadingGmail
+                    ? "Checking Gmail..."
+                    : !detailDraft.email
+                      ? "Add an email to detect recent email activity."
+                      : gmailConfigured === false
+                        ? "Gmail tracking is not connected."
+                        : latestGmailThread && latestGmailDate
+                          ? `${latestGmailFromAccount ? "Last inbound" : "Last email"} ${latestGmailDate.toLocaleDateString()}`
+                          : "No recent Gmail activity found."}
+                </div>
+              </div>
+              {latestGmailThread && (
+                <div
+                  className={`rounded-xl border px-3 py-2 text-right text-xs ${
+                    latestGmailThread.unread
+                      ? "border-rs-gold/50 bg-rs-gold/10 text-rs-gold"
+                      : "border-rs-border/70 bg-black/10 text-[#af9fe6]"
+                  }`}
+                >
+                  <div className="font-semibold">{latestGmailThread.unread ? "Unread" : "Tracked"}</div>
+                  <div>{latestGmailThread.messageCount} message{latestGmailThread.messageCount === 1 ? "" : "s"}</div>
+                </div>
+              )}
+            </div>
+            {latestGmailThread?.snippet && (
+              <div className="mt-3 line-clamp-2 rounded-xl border border-rs-border/60 bg-black/10 px-3 py-2 text-sm text-[#d8ccfb]">
+                {latestGmailThread.snippet}
+              </div>
+            )}
+          </Card>
 
           <Card>
             <div className="space-y-3">

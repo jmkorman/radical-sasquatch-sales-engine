@@ -20,6 +20,7 @@ export type StatusValue =
   | "";
 
 export interface BaseAccount {
+  id: string;
   _rowIndex: number;
   _tab: TabName;
   _tabSlug: TabSlug;
@@ -63,6 +64,7 @@ export interface FoodTruckAccount extends BaseAccount {
 }
 
 export interface ActiveAccount {
+  id: string;
   _rowIndex: number;
   _tab: "Active Accounts";
   _tabSlug: "active-accounts";

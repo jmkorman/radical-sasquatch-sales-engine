@@ -16,14 +16,42 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       void fetchAllTabs({ silent: true });
     };
 
+    let lastGmailPollAt = 0;
+    const pollGmail = () => {
+      if (document.visibilityState !== "visible") return;
+      // Throttle: don't poll more than once every 30s
+      const now = Date.now();
+      if (now - lastGmailPollAt < 30_000) return;
+      lastGmailPollAt = now;
+      fetch("/api/gmail/poll")
+        .then((r) => (r.ok ? r.json() : null))
+        .then((result) => {
+          if (result?.imported > 0) {
+            // Refresh account data so newly-populated contact info appears immediately
+            void fetchAllTabs({ silent: true });
+          }
+        })
+        .catch(() => {});
+    };
+
     const interval = window.setInterval(refreshSilently, 30000);
     window.addEventListener("focus", refreshSilently);
     document.addEventListener("visibilitychange", refreshSilently);
+
+    // Poll Gmail: on mount (after 10s delay), every 2 minutes, and when the window regains focus
+    const gmailTimeout = window.setTimeout(pollGmail, 10000);
+    const gmailInterval = window.setInterval(pollGmail, 2 * 60 * 1000);
+    window.addEventListener("focus", pollGmail);
+    document.addEventListener("visibilitychange", pollGmail);
 
     return () => {
       window.clearInterval(interval);
       window.removeEventListener("focus", refreshSilently);
       document.removeEventListener("visibilitychange", refreshSilently);
+      window.clearTimeout(gmailTimeout);
+      window.clearInterval(gmailInterval);
+      window.removeEventListener("focus", pollGmail);
+      document.removeEventListener("visibilitychange", pollGmail);
     };
   }, [fetchAllTabs]);
 

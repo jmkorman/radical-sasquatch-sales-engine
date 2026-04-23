@@ -15,6 +15,7 @@ import {
   AllTabsData,
   StatusValue,
 } from "@/types/accounts";
+import { buildStableAccountId } from "@/lib/accounts/identity";
 
 function cell(row: string[], index: number): string {
   return row[index] ?? "";
@@ -56,11 +57,13 @@ function toStatus(val: string): StatusValue {
 
 function mapRestaurant(row: string[], rowIndex: number): RestaurantAccount {
   const c = RESTAURANTS_COLUMNS;
+  const account = cell(row, c.ACCOUNT);
   return {
+    id: buildStableAccountId("restaurants", account),
     _rowIndex: rowIndex,
     _tab: "Restaurants",
     _tabSlug: "restaurants",
-    account: cell(row, c.ACCOUNT),
+    account,
     type: cell(row, c.TYPE),
     location: cell(row, c.LOCATION),
     ig: cell(row, c.IG),
@@ -82,11 +85,13 @@ function mapRestaurant(row: string[], rowIndex: number): RestaurantAccount {
 
 function mapRetail(row: string[], rowIndex: number): RetailAccount {
   const c = RETAIL_COLUMNS;
+  const account = cell(row, c.ACCOUNT);
   return {
+    id: buildStableAccountId("retail", account),
     _rowIndex: rowIndex,
     _tab: "Retail",
     _tabSlug: "retail",
-    account: cell(row, c.ACCOUNT),
+    account,
     type: cell(row, c.TYPE),
     location: cell(row, c.LOCATION),
     ig: cell(row, c.IG),
@@ -106,11 +111,13 @@ function mapRetail(row: string[], rowIndex: number): RetailAccount {
 
 function mapCatering(row: string[], rowIndex: number): CateringAccount {
   const c = CATERING_COLUMNS;
+  const account = cell(row, c.ACCOUNT);
   return {
+    id: buildStableAccountId("catering", account),
     _rowIndex: rowIndex,
     _tab: "Catering",
     _tabSlug: "catering",
-    account: cell(row, c.ACCOUNT),
+    account,
     type: cell(row, c.TYPE),
     location: cell(row, c.LOCATION),
     ig: cell(row, c.IG),
@@ -130,11 +137,13 @@ function mapCatering(row: string[], rowIndex: number): CateringAccount {
 
 function mapFoodTruck(row: string[], rowIndex: number): FoodTruckAccount {
   const c = FOOD_TRUCK_COLUMNS;
+  const account = cell(row, c.ACCOUNT);
   return {
+    id: buildStableAccountId("food-truck", account),
     _rowIndex: rowIndex,
     _tab: "Food Truck",
     _tabSlug: "food-truck",
-    account: cell(row, c.ACCOUNT),
+    account,
     type: cell(row, c.TYPE),
     location: cell(row, c.LOCATION),
     ig: cell(row, c.IG),
@@ -154,11 +163,13 @@ function mapFoodTruck(row: string[], rowIndex: number): FoodTruckAccount {
 
 function mapActiveAccount(row: string[], rowIndex: number): ActiveAccount {
   const c = ACTIVE_ACCOUNTS_COLUMNS;
+  const account = cell(row, c.ACCOUNT);
   return {
+    id: buildStableAccountId("active-accounts", account),
     _rowIndex: rowIndex,
     _tab: "Active Accounts",
     _tabSlug: "active-accounts",
-    account: cell(row, c.ACCOUNT),
+    account,
     type: cell(row, c.TYPE),
     contactName: cell(row, c.CONTACT_NAME),
     status: toStatus(cell(row, c.STATUS)),

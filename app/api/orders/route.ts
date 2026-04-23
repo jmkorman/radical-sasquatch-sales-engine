@@ -18,10 +18,6 @@ function supabaseConfigured() {
 export async function GET(request: NextRequest) {
   try {
     const accountId = request.nextUrl.searchParams.get("accountId") ?? undefined;
-    const sheetOrders = await getOrdersFromSheet(accountId).catch((error) => {
-      console.error("Orders sheet read error:", error);
-      return [] as OrderRecord[];
-    });
     const dbOrders = supabaseConfigured()
       ? await getOrders(accountId).catch((error) => {
           console.error("Orders database read error:", error);
@@ -29,15 +25,23 @@ export async function GET(request: NextRequest) {
         })
       : [];
 
-    const byId = new Map<string, OrderRecord>();
-    for (const order of dbOrders) byId.set(order.id, normalizeOrderRecord(order));
-    for (const order of sheetOrders) {
-      const existing = byId.get(order.id);
-      byId.set(order.id, existing ? normalizeOrderRecord({ ...existing, ...order }) : order);
+    if (dbOrders.length > 0) {
+      return NextResponse.json(
+        dbOrders.sort(
+          (a, b) =>
+            new Date(b.updated_at || b.created_at || b.order_date).getTime() -
+            new Date(a.updated_at || a.created_at || a.order_date).getTime()
+        )
+      );
     }
 
+    const sheetOrders = await getOrdersFromSheet(accountId).catch((error) => {
+      console.error("Orders sheet fallback read error:", error);
+      return [] as OrderRecord[];
+    });
+
     return NextResponse.json(
-      Array.from(byId.values()).sort(
+      sheetOrders.sort(
         (a, b) =>
           new Date(b.updated_at || b.created_at || b.order_date).getTime() -
           new Date(a.updated_at || a.created_at || a.order_date).getTime()
@@ -67,10 +71,10 @@ export async function POST(request: NextRequest) {
 
     const order = normalizeOrderRecord({ ...orderInput, ...dbOrder });
     const sheetOrder = await appendOrderToSheet(order).catch((error) => {
-      console.error("Orders sheet append error:", error);
+      console.error("Orders sheet secondary append error:", error);
       return null;
     });
-    const created = normalizeOrderRecord({ ...order, ...sheetOrder });
+    const created = normalizeOrderRecord(dbOrder ? { ...sheetOrder, ...dbOrder } : { ...order, ...sheetOrder });
 
     await ensureActiveAccountForOrder(created).catch((error) => {
       console.error("Active account order sync error:", error);
@@ -91,26 +95,30 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: "id is required" }, { status: 400 });
     }
 
-    const allOrders = await getOrdersFromSheet().catch(() => [] as OrderRecord[]);
-    const existingSheetOrder = allOrders.find((order) => order.id === id);
+    const existingDbOrder = supabaseConfigured()
+      ? (await getOrders().catch(() => [] as OrderRecord[])).find((order) => order.id === id)
+      : null;
+    const existingSheetOrder = existingDbOrder
+      ? null
+      : (await getOrdersFromSheet().catch(() => [] as OrderRecord[])).find((order) => order.id === id);
+    const existingOrder = existingDbOrder ?? existingSheetOrder;
     const updates = body.updates ?? {};
     const progressNote = typeof body.progressNote === "string" ? body.progressNote.trim() : "";
     const actor = typeof body.actor === "string" && body.actor.trim() ? body.actor.trim() : "Production";
     const statusChanged =
-      updates.status && existingSheetOrder?.status && updates.status !== existingSheetOrder.status;
+      updates.status && existingOrder?.status && updates.status !== existingOrder.status;
 
     const historyMessage =
-      progressNote ||
-      (statusChanged ? `Status changed from ${existingSheetOrder?.status} to ${updates.status}` : "");
+      progressNote || (statusChanged ? `Status changed from ${existingOrder?.status} to ${updates.status}` : "");
 
     const nextOrder = normalizeOrderRecord({
-      ...existingSheetOrder,
+      ...existingOrder,
       ...updates,
       id,
       updated_at: new Date().toISOString(),
       history: historyMessage
-        ? appendOrderHistory(existingSheetOrder?.history, historyMessage, actor)
-        : existingSheetOrder?.history ?? null,
+        ? appendOrderHistory(existingOrder?.history, historyMessage, actor)
+        : existingOrder?.history ?? null,
     });
 
     const dbUpdates: Partial<OrderRecord> = { ...nextOrder };
@@ -123,8 +131,10 @@ export async function PATCH(request: NextRequest) {
         })
       : null;
 
-    const updated = normalizeOrderRecord({ ...nextOrder, ...dbOrder, ...nextOrder });
-    await updateOrderInSheet(updated);
+    const updated = normalizeOrderRecord(dbOrder ? { ...nextOrder, ...dbOrder } : nextOrder);
+    await updateOrderInSheet(updated).catch((error) => {
+      console.error("Orders sheet secondary update error:", error);
+    });
     return NextResponse.json(updated);
   } catch (error) {
     console.error("Orders PATCH error:", error);

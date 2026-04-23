@@ -2,6 +2,7 @@ import { createServerClient } from "./server";
 import { ActivityLog } from "@/types/activity";
 import { OrderRecord } from "@/types/orders";
 import { normalizeOrderRecord } from "@/lib/orders/helpers";
+import { AccountSnapshot } from "@/lib/accounts/snapshot";
 
 function normalizeActivityLog(log: Partial<ActivityLog>): ActivityLog {
   return {
@@ -34,6 +35,74 @@ function getMissingColumn(error: { code?: string; message?: string } | null) {
   return match?.[1] ?? null;
 }
 
+function isMissingRelation(error: { code?: string; message?: string } | null) {
+  return error?.code === "42P01" || error?.message?.toLowerCase().includes("could not find the table");
+}
+
+export async function upsertAccountSnapshots(accounts: AccountSnapshot[]): Promise<boolean> {
+  if (accounts.length === 0) return true;
+  const dedupedAccounts = Array.from(
+    accounts.reduce((map, account) => map.set(account.id, account), new Map<string, AccountSnapshot>()).values()
+  );
+  const supabase = createServerClient();
+  const { error } = await supabase
+    .from("accounts")
+    .upsert(dedupedAccounts, { onConflict: "id" });
+
+  if (isMissingRelation(error)) {
+    console.warn("Supabase accounts table is missing. Run supabase/accounts.sql to enable account source-of-truth sync.");
+    return false;
+  }
+
+  if (error) throw error;
+  return true;
+}
+
+export async function upsertAccountSnapshot(account: AccountSnapshot): Promise<boolean> {
+  return upsertAccountSnapshots([account]);
+}
+
+export async function getAccountSnapshots(): Promise<AccountSnapshot[]> {
+  const supabase = createServerClient();
+  const { data, error } = await supabase
+    .from("accounts")
+    .select("*")
+    .order("account_name", { ascending: true });
+
+  if (isMissingRelation(error)) return [];
+  if (error) throw error;
+  return (data ?? []) as AccountSnapshot[];
+}
+
+export async function updateAccountSnapshot(
+  id: string,
+  updates: Partial<Omit<AccountSnapshot, "id">>
+): Promise<AccountSnapshot | null> {
+  const supabase = createServerClient();
+  const { data, error } = await supabase
+    .from("accounts")
+    .update({ ...updates, updated_at: new Date().toISOString() })
+    .eq("id", id)
+    .select()
+    .single();
+
+  if (isMissingRelation(error)) return null;
+  if (error) throw error;
+  return data as AccountSnapshot;
+}
+
+export async function deleteAccountSnapshot(id: string): Promise<boolean> {
+  const supabase = createServerClient();
+  const { error } = await supabase
+    .from("accounts")
+    .delete()
+    .eq("id", id);
+
+  if (isMissingRelation(error)) return false;
+  if (error) throw error;
+  return true;
+}
+
 export async function insertActivityLog(entry: {
   account_id: string;
   tab: string;
@@ -62,7 +131,11 @@ export async function insertActivityLog(entry: {
       .single();
 
     if (!error) {
-      return normalizeActivityLog(data as Partial<ActivityLog>);
+      const inserted = normalizeActivityLog(data as Partial<ActivityLog>);
+      if (shouldReplaceAccountFollowUp(entry, inserted)) {
+        await clearOtherFollowUpDates(inserted, inserted.id);
+      }
+      return inserted;
     }
 
     const missingColumn = getMissingColumn(error);
@@ -74,6 +147,59 @@ export async function insertActivityLog(entry: {
     }
 
     throw error;
+  }
+}
+
+function shouldReplaceAccountFollowUp(
+  entry: {
+    action_type: string;
+    follow_up_date?: string | null;
+    activity_kind?: string;
+    counts_as_contact?: boolean;
+  },
+  inserted: ActivityLog
+) {
+  if (!inserted.account_id) return false;
+  if (entry.action_type === "note" || entry.activity_kind === "note") return false;
+  return entry.counts_as_contact ?? true;
+}
+
+export async function clearOtherFollowUpDates(
+  log: Pick<ActivityLog, "account_id" | "tab" | "row_index" | "account_name">,
+  keepLogId?: string | null
+) {
+  const supabase = createServerClient();
+
+  async function clearByAccountId(accountId: string) {
+    if (!accountId) return;
+    let query = supabase
+      .from("activity_logs")
+      .update({ follow_up_date: null })
+      .eq("account_id", accountId);
+
+    if (keepLogId) query = query.neq("id", keepLogId);
+
+    const { error } = await query;
+    if (error) throw error;
+  }
+
+  await clearByAccountId(log.account_id);
+
+  if (log.tab && log.row_index) {
+    await clearByAccountId(`${log.tab}_${log.row_index}`);
+  }
+
+  if (log.tab && log.account_name) {
+    let query = supabase
+      .from("activity_logs")
+      .update({ follow_up_date: null })
+      .eq("tab", log.tab)
+      .eq("account_name", log.account_name);
+
+    if (keepLogId) query = query.neq("id", keepLogId);
+
+    const { error } = await query;
+    if (error) throw error;
   }
 }
 
@@ -127,7 +253,11 @@ export async function updateActivityLog(
       .single();
 
     if (!error) {
-      return normalizeActivityLog(data as Partial<ActivityLog>);
+      const updated = normalizeActivityLog(data as Partial<ActivityLog>);
+      if (updates.follow_up_date && updated.account_id) {
+        await clearOtherFollowUpDates(updated, updated.id);
+      }
+      return updated;
     }
 
     const missingColumn = getMissingColumn(error);

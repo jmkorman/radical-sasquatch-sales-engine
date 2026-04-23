@@ -113,7 +113,11 @@ export function FollowUpQueue({
               <div className="flex items-center gap-3">
                 {item.logId && onSnooze && (
                   <div className="flex gap-1">
-                    {[{ label: "+2d", days: 2 }, { label: "+1w", days: 7 }].map(({ label, days }) => (
+                    {[
+                      { label: "+1D", days: 1 },
+                      { label: "+2D", days: 2 },
+                      { label: "+1W", days: 7 },
+                    ].map(({ label, days }) => (
                       <button
                         key={label}
                         onClick={() => onSnooze(item.logId!, snoozeDate(days))}

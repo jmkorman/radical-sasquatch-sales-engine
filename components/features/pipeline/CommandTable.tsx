@@ -293,13 +293,14 @@ export function CommandTable({
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: `repeat(${ACTIVE_PIPELINE_STATUSES.length}, minmax(80px, 1fr))`,
-            gap: 8,
-            padding: 8,
+            gridTemplateColumns: `repeat(${ACTIVE_PIPELINE_STATUSES.length}, minmax(142px, 1fr))`,
+            gap: 10,
+            padding: 10,
             border: "1px solid rgba(73,48,140,0.6)",
             borderRadius: 14,
             marginBottom: 14,
             overflowX: "auto",
+            scrollbarWidth: "thin",
             background: "linear-gradient(180deg, rgba(26,15,69,0.68), rgba(16,7,38,0.52))",
             boxShadow: "inset 0 1px 0 rgba(255,255,255,0.04)",
           }}
@@ -320,8 +321,8 @@ export function CommandTable({
                 }}
                 aria-pressed={active}
                 style={{
-                  minHeight: 74,
-                  padding: "11px 12px 10px",
+                  minHeight: 82,
+                  padding: "12px 13px 11px",
                   borderRadius: 10,
                   border: active
                     ? `1px solid color-mix(in oklch, ${c.base} 70%, white)`
@@ -386,7 +387,7 @@ export function CommandTable({
                       <span
                         style={{
                           fontSize: 10,
-                          letterSpacing: "0.14em",
+                          letterSpacing: "0.1em",
                           lineHeight: 1.25,
                           color: c.ink,
                           textTransform: "uppercase",
@@ -438,7 +439,7 @@ export function CommandTable({
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "6px minmax(200px, 1.5fr) 155px 120px minmax(260px, 1.8fr)",
+                gridTemplateColumns: "6px minmax(220px, 1.5fr) 155px 120px minmax(260px, 1.8fr)",
                 gap: 0,
                 padding: "8px 16px 8px 22px",
                 fontSize: 10,
@@ -465,19 +466,19 @@ export function CommandTable({
                 maxHeight: "70vh",
               }}
             >
-          {rows.map((account, i) => {
+	          {rows.map((account, i) => {
             const isSel =
               selected !== null &&
               selected.account === account.account &&
               selected._tab === account._tab &&
               selected._rowIndex === account._rowIndex;
             return (
-              <TableRow
+	              <TableRow
                 key={`${account._tab}_${account._rowIndex}`}
                 account={account}
                 selected={isSel}
-                onSelect={() => setSelected(isSel ? null : account)}
-                tweaks={tweaks}
+	                onSelect={() => setSelected(isSel ? null : account)}
+	                tweaks={tweaks}
                 rowPad={rowPad}
                 lastOfList={i === rows.length - 1}
                 serverLogs={serverLogs}
@@ -701,7 +702,7 @@ function TableRow({
       onClick={onSelect}
       style={{
         display: "grid",
-        gridTemplateColumns: "6px minmax(200px, 1.5fr) 155px 120px minmax(260px, 1.8fr)",
+        gridTemplateColumns: "6px minmax(220px, 1.5fr) 155px 120px minmax(260px, 1.8fr)",
         gap: 0,
         alignItems: "center",
         background: selected

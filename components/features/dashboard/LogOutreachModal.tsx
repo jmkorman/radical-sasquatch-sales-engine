@@ -103,18 +103,18 @@ export function LogOutreachModal({
   const isBackburner = statusAfter === "Backburner";
 
   const followUpPresets = isBackburner
-    ? [
-        { label: "2 Weeks", value: addDays(14) },
-        { label: "1 Month",  value: addDays(30) },
-        { label: "3 Months", value: addDays(90) },
-        { label: "6 Months", value: addDays(180) },
-      ]
-    : [
-        { label: "Tomorrow",  value: addDays(1) },
-        { label: "2 Days",    value: addDays(2) },
-        { label: "Friday",    value: nextWeekday(5) },
-        { label: "Next Week", value: addDays(7) },
-      ];
+      ? [
+          { label: "2 Weeks", value: addDays(14) },
+          { label: "1 Month",  value: addDays(30) },
+          { label: "3 Months", value: addDays(90) },
+          { label: "6 Months", value: addDays(180) },
+        ]
+      : [
+          { label: "Tomorrow",  value: addDays(1) },
+          { label: "2 Days",    value: addDays(2) },
+          { label: "Friday",    value: nextWeekday(5) },
+          { label: "Next Week", value: nextWeekday(1) },
+        ];
 
   function handleActionTypeSelect(type: string) {
     setActionType(type);

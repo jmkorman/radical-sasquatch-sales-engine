@@ -22,6 +22,7 @@ const ACTION_ICONS: Record<string, string> = {
 export function ActivityLogList({
   logs,
   showDeleted = false,
+  showAccountName = false,
   onClearFollowUp,
   onEditFollowUp,
   onEditOutreach,
@@ -31,6 +32,7 @@ export function ActivityLogList({
 }: {
   logs: ActivityLogType[];
   showDeleted?: boolean;
+  showAccountName?: boolean;
   onClearFollowUp?: (log: ActivityLogType) => void;
   onEditFollowUp?: (log: ActivityLogType, newDate: string) => Promise<void> | void;
   onEditOutreach?: (log: ActivityLogType) => void;
@@ -138,6 +140,14 @@ export function ActivityLogList({
               <div className="flex-1 min-w-0 space-y-2">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-rs-cream capitalize font-semibold">{log.action_type}</span>
+                  {showAccountName && (
+                    <Link
+                      href={`/accounts/${log.tab}/${log.row_index}`}
+                      className="rounded-full border border-rs-cyan/35 bg-rs-cyan/10 px-2 py-0.5 text-[11px] font-semibold text-rs-cyan hover:border-rs-gold/50 hover:text-rs-gold"
+                    >
+                      {log.account_name || "Unknown account"}
+                    </Link>
+                  )}
                   <span className="rounded-full border border-rs-border/60 bg-white/5 px-2 py-0.5 text-[11px] text-[#d8ccfb]">
                     {sourceLabel}
                   </span>
