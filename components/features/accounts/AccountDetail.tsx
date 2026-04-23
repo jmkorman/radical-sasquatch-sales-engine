@@ -29,6 +29,7 @@ import { getLogsForAccount, getScheduledFollowUpLogForAccount } from "@/lib/acti
 import { getAccountPrimaryId } from "@/lib/accounts/identity";
 import { persistActivityEntry } from "@/lib/activity/persist";
 import { getAccountHealth } from "@/lib/accounts/health";
+import { addToHitList, removeFromHitList, isOnHitList } from "@/lib/dashboard/hitList";
 
 interface AccountDetailProps {
   account: AnyAccount;
@@ -53,6 +54,7 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
   const showActionFeedbackWithAction = useUIStore((state) => state.showActionFeedbackWithAction);
   const accountId = getAccountPrimaryId(account);
 
+  const [onHitList, setOnHitList] = useState(() => isOnHitList(accountId));
   const [showLogModal, setShowLogModal] = useState(false);
   const [editingOutreachLog, setEditingOutreachLog] = useState<ActivityLog | null>(null);
   const [detailDraft, setDetailDraft] = useState({
@@ -748,6 +750,27 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
                     className="min-w-[180px]"
                   />
                   <Button onClick={() => setShowLogModal(true)}>Log Outreach</Button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (onHitList) {
+                        removeFromHitList(accountId);
+                        setOnHitList(false);
+                        showActionFeedback("Removed from today's hit list.", "success");
+                      } else {
+                        addToHitList(accountId);
+                        setOnHitList(true);
+                        showActionFeedback("Added to today's hit list.", "success");
+                      }
+                    }}
+                    className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${
+                      onHitList
+                        ? "border-rs-gold/50 bg-rs-gold/15 text-rs-gold hover:bg-rs-gold/25"
+                        : "border-rs-border/60 bg-white/5 text-[#af9fe6] hover:border-rs-gold/40 hover:text-rs-gold"
+                    }`}
+                  >
+                    {onHitList ? "On Hit List" : "Hit List"}
+                  </button>
                 </div>
               </div>
 

@@ -12,7 +12,8 @@ import { getAllPipelineAccounts } from "@/lib/pipeline/urgency";
 import { persistActivityEntry } from "@/lib/activity/persist";
 import { todayISO } from "@/lib/utils/dates";
 import { STATUS_VALUES, TAB_NAME_TO_SLUG } from "@/lib/utils/constants";
-import { normalizeAccountName } from "@/lib/accounts/identity";
+import { normalizeAccountName, buildStableAccountId } from "@/lib/accounts/identity";
+import { addToHitList } from "@/lib/dashboard/hitList";
 
 type AddAccountForm = {
   tab: TabName;
@@ -53,6 +54,7 @@ export function QuickLogButton() {
   const [selectedAccount, setSelectedAccount] = useState<AnyAccount | null>(null);
   const [accountSearch, setAccountSearch] = useState("");
   const [addForm, setAddForm] = useState<AddAccountForm>(EMPTY_ADD_ACCOUNT_FORM);
+  const [addToHitListChecked, setAddToHitListChecked] = useState(false);
 
   const { data, fetchAllTabs } = useSheetStore();
   const showActionFeedback = useUIStore((s) => s.showActionFeedback);
@@ -94,6 +96,7 @@ export function QuickLogButton() {
     setSelectedAccount(null);
     setAddForm(EMPTY_ADD_ACCOUNT_FORM);
     setAddAccountMessage(null);
+    setAddToHitListChecked(false);
   };
 
   const handleClose = () => {
@@ -130,6 +133,9 @@ export function QuickLogButton() {
       }
 
       const created: { tab?: TabName; rowIndex?: number | null; href?: string } = await res.json();
+      if (addToHitListChecked) {
+        addToHitList(buildStableAccountId(addForm.tab, addForm.account));
+      }
       await fetchAllTabs();
       setAddAccountMessage({ tone: "success", text: "Account added. Opening it now..." });
       setAddForm(EMPTY_ADD_ACCOUNT_FORM);
@@ -372,6 +378,16 @@ export function QuickLogButton() {
                 rows={2}
                 className="w-full rounded-lg border border-[#3a2f6e] bg-[#100726] px-3 py-2 text-white outline-none focus:border-[#64f5ea]"
               />
+            </label>
+
+            <label className="flex cursor-pointer items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={addToHitListChecked}
+                onChange={(e) => setAddToHitListChecked(e.target.checked)}
+                className="rounded border-[#3a2f6e] bg-[#100726] accent-rs-cyan"
+              />
+              <span className="text-[#af9fe6]">Add to today's hit list</span>
             </label>
 
             <div className="flex justify-end gap-2">

@@ -11,6 +11,7 @@ import { useUIStore } from "@/stores/useUIStore";
 import { persistActivityEntry } from "@/lib/activity/persist";
 import { getAllAccounts } from "@/lib/activity/timeline";
 import { getAccountPrimaryId } from "@/lib/accounts/identity";
+import { loadHitListSets, addToHitList, removeFromHitList } from "@/lib/dashboard/hitList";
 
 type DisplayHitListItem = {
   account: AnyAccount;
@@ -23,8 +24,8 @@ type DisplayHitListItem = {
 export function HitList({ items }: { items: HitListItem[] }) {
   const [modalAccount, setModalAccount] = useState<AnyAccount | null>(null);
   const [query, setQuery] = useState("");
-  const [removedIds, setRemovedIds] = useState<Set<string>>(() => new Set());
-  const [manualIds, setManualIds] = useState<Set<string>>(() => new Set());
+  const [removedIds, setRemovedIds] = useState<Set<string>>(() => loadHitListSets().removedIds);
+  const [manualIds, setManualIds] = useState<Set<string>>(() => loadHitListSets().manualIds);
   const { data, fetchAllTabs } = useSheetStore();
   const showActionFeedback = useUIStore((state) => state.showActionFeedback);
 
@@ -78,6 +79,7 @@ export function HitList({ items }: { items: HitListItem[] }) {
 
   const addAccount = (account: AnyAccount) => {
     const id = getAccountPrimaryId(account);
+    addToHitList(id);
     setManualIds((prev) => new Set(prev).add(id));
     setRemovedIds((prev) => {
       const next = new Set(prev);
@@ -89,6 +91,7 @@ export function HitList({ items }: { items: HitListItem[] }) {
 
   const removeAccount = (account: AnyAccount) => {
     const id = getAccountPrimaryId(account);
+    removeFromHitList(id);
     setRemovedIds((prev) => new Set(prev).add(id));
     setManualIds((prev) => {
       const next = new Set(prev);
