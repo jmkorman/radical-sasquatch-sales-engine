@@ -50,6 +50,8 @@ export function AllLogsView() {
   const [trashLogs, setTrashLogs] = useState<ActivityLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [trashLoading, setTrashLoading] = useState(false);
+  const [gmailPolling, setGmailPolling] = useState(false);
+  const [pendingGmailLogs, setPendingGmailLogs] = useState<ActivityLog[]>([]);
   const [query, setQuery] = useState("");
   const [actionFilter, setActionFilter] = useState("all");
   const [tabFilter, setTabFilter] = useState("all");
@@ -116,10 +118,15 @@ export function AllLogsView() {
       }),
     });
     if (!res.ok) throw new Error("Failed to update outreach");
+    const hadPending = pendingGmailLogs.length > 0;
     setEditingOutreachLog(null);
     setEditingOutreachAccount(null);
-    showActionFeedback("Outreach updated.", "success");
+    showActionFeedback(
+      hadPending ? `Outreach updated. ${pendingGmailLogs.length} more email${pendingGmailLogs.length === 1 ? "" : "s"} to review.` : "Outreach updated.",
+      "success"
+    );
     await loadLogs();
+    if (hadPending) openNextGmailLog(pendingGmailLogs, data);
   }
 
   async function loadTrashLogs() {
@@ -133,6 +140,58 @@ export function AllLogsView() {
       setTrashLogs([]);
     } finally {
       setTrashLoading(false);
+    }
+  }
+
+  function openNextGmailLog(remaining: ActivityLog[], allData: typeof data) {
+    if (!remaining.length || !allData) return;
+    const [next, ...rest] = remaining;
+    const account = getAccountFromLog(allData, next);
+    if (account) {
+      setPendingGmailLogs(rest);
+      setEditingOutreachLog(next);
+      setEditingOutreachAccount(account);
+    } else if (rest.length) {
+      openNextGmailLog(rest, allData);
+    }
+  }
+
+  async function pollGmail() {
+    setGmailPolling(true);
+    try {
+      const res = await fetch("/api/gmail/poll");
+      const result: { imported?: number; importedAccounts?: string[]; skipped?: boolean; reason?: string } = await res.json();
+
+      if (!res.ok || result.skipped) {
+        showActionFeedback(result.reason ?? "Gmail not configured.", "error");
+        return;
+      }
+
+      const imported = result.imported ?? 0;
+      if (imported === 0) {
+        showActionFeedback("No new emails found.", "success");
+        return;
+      }
+
+      // Fetch fresh logs to find the newly imported ones
+      const freshRes = await fetch("/api/activity", { cache: "no-store" });
+      const freshLogs: ActivityLog[] = freshRes.ok ? await freshRes.json() : [];
+      const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
+      const newGmailLogs = freshLogs.filter(
+        (log) => log.source === "gmail" && new Date(log.created_at).getTime() > fiveMinutesAgo
+      );
+
+      setLogs(freshLogs);
+      showActionFeedback(
+        `${imported} email${imported === 1 ? "" : "s"} imported. Add a follow-up date below.`,
+        "success"
+      );
+
+      openNextGmailLog(newGmailLogs, data);
+    } catch {
+      showActionFeedback("Gmail poll failed.", "error");
+    } finally {
+      setGmailPolling(false);
     }
   }
 
@@ -195,7 +254,11 @@ export function AllLogsView() {
         initialLog={editingOutreachLog}
         title={`Edit Outreach - ${editingOutreachAccount.account}`}
         submitLabel="Save Outreach"
-        onClose={() => { setEditingOutreachLog(null); setEditingOutreachAccount(null); }}
+        onClose={() => {
+          setEditingOutreachLog(null);
+          setEditingOutreachAccount(null);
+          if (pendingGmailLogs.length) openNextGmailLog(pendingGmailLogs, data);
+        }}
         onSubmit={handleUpdateOutreachLog}
       />
     )}
@@ -226,6 +289,14 @@ export function AllLogsView() {
           onClick={() => setShowTrash(true)}
         >
           Log Trash {showTrash ? `(${trashLogs.length})` : deletedLogs.length > 0 ? `(${deletedLogs.length})` : ""}
+        </Button>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => void pollGmail()}
+          disabled={gmailPolling}
+        >
+          {gmailPolling ? "Checking Gmail…" : "Refresh Gmail"}
         </Button>
       </div>
 
