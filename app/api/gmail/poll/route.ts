@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { getAccountsData } from "@/lib/accounts/source";
 import { getAllAccounts } from "@/lib/accounts/snapshot";
 import { listRecentThreadIds, getThreadDetailsById, GmailThread } from "@/lib/gmail/threads";
-import { getActivityLogs, insertActivityLog, updateAccountSnapshot } from "@/lib/supabase/queries";
+import { insertActivityLog, updateAccountSnapshot } from "@/lib/supabase/queries";
+import { createServerClient } from "@/lib/supabase/server";
 import { getAccountStableId } from "@/lib/accounts/identity";
 import { updateCell } from "@/lib/sheets/write";
 import { getContactNameColumnIndex, getEmailColumnIndex } from "@/lib/sheets/schema";
@@ -48,8 +49,8 @@ function extractUrlDomain(url: string | undefined | null): string | null {
   return normalized;
 }
 
-function detectDirection(thread: GmailThread): "sent" | "received" {
-  return parseAddr(thread.from).email.includes(OWNER_EMAIL) ? "sent" : "received";
+function isSent(thread: GmailThread): boolean {
+  return parseAddr(thread.from).email.includes(OWNER_EMAIL);
 }
 
 function getContactAddr(thread: GmailThread): { name: string; email: string } | null {
@@ -103,8 +104,11 @@ async function logThread(account: AnyAccount, thread: GmailThread) {
   const accountId = getAccountStableId(account);
   const threadDate = thread.latestMessageDate || thread.date;
   const logDate = threadDate ? new Date(threadDate).toISOString() : new Date().toISOString();
-  const direction = detectDirection(thread);
-  const tag = direction === "sent" ? "[Sent]" : "[Received]";
+
+  // Thread ID marker goes first so it's never truncated by DB field limits
+  // Body capped at 3000 chars; fall back to snippet if body is empty
+  const emailBody = (thread.body?.trim() || thread.snippet.trim()).slice(0, 3000);
+  const note = `[gmail-thread:${thread.id}]\n[Sent] ${thread.subject}\n\n${emailBody}`;
 
   await insertActivityLog({
     account_id: accountId,
@@ -112,7 +116,7 @@ async function logThread(account: AnyAccount, thread: GmailThread) {
     row_index: account._rowIndex,
     account_name: account.account,
     action_type: "email",
-    note: `${tag} ${thread.subject}\n\n${thread.snippet.trim()}\n\n[gmail-thread:${thread.id}]`,
+    note,
     source: "gmail",
     activity_kind: "outreach",
     counts_as_contact: true,
@@ -147,13 +151,18 @@ export async function GET() {
     const accounts = getAllAccounts(data);
     if (!accounts.length) return NextResponse.json({ imported: 0, checked: 0, accounts: 0 });
 
-    // Build set of already-logged Gmail thread IDs
-    const allLogs = await getActivityLogs();
-    const seenThreadIds = new Set(
-      allLogs
-        .filter((l) => l.source === "gmail")
-        .map((l) => extractThreadId(l.note))
-        .filter(Boolean) as string[]
+    // Build set of already-logged Gmail thread IDs.
+    // Direct query without is_deleted filter — gmail entries are inserted without
+    // is_deleted set, so null != false would exclude them from getActivityLogs().
+    const supabase = createServerClient();
+    const { data: gmailNotes } = await supabase
+      .from("activity_logs")
+      .select("note")
+      .eq("source", "gmail");
+    const seenThreadIds = new Set<string>(
+      (gmailNotes ?? [])
+        .map((r) => extractThreadId(r.note as string | null))
+        .filter((id): id is string => id !== null)
     );
 
     // 14-day lookback
@@ -175,15 +184,8 @@ export async function GET() {
       if (urlDomain && !domainIdx.has(urlDomain)) domainIdx.set(urlDomain, account);
     }
 
-    // 2 Gmail list queries total (sent + inbox) — core of the fix
-    const [sentIds, inboxIds] = await Promise.all([
-      listRecentThreadIds(`in:sent after:${sinceStr}`, 50),
-      listRecentThreadIds(`in:inbox after:${sinceStr}`, 50),
-    ]);
-
-    // Deduplicate and filter to only threads we haven't logged yet
-    const combined = new Set([...sentIds, ...inboxIds]);
-    const allIds = Array.from(combined);
+    // Only log sent emails
+    const allIds = await listRecentThreadIds(`in:sent after:${sinceStr}`, 50);
     const newIds = allIds.filter((id) => !seenThreadIds.has(id));
 
     if (!newIds.length) {
@@ -203,7 +205,21 @@ export async function GET() {
     const breakdown = { email: 0, domain: 0, name: 0 };
 
     for (const thread of threads) {
+      // Only process threads where we are the sender
+      if (!isSent(thread)) continue;
       if (seenThreadIds.has(thread.id)) continue;
+
+      // Per-thread DB check — handles concurrent polls and pagination limits
+      const { count } = await supabase
+        .from("activity_logs")
+        .select("id", { count: "exact", head: true })
+        .eq("source", "gmail")
+        .like("note", `%[gmail-thread:${thread.id}]%`);
+      if (count && count > 0) {
+        seenThreadIds.add(thread.id);
+        continue;
+      }
+
       const match = matchThread(thread, emailIdx, domainIdx, accounts);
       if (!match) continue;
       seenThreadIds.add(thread.id);

@@ -4,12 +4,31 @@ export interface GmailThread {
   id: string;
   subject: string;
   snippet: string;
+  body: string;
   from: string;
   to: string;
   date: string;
   messageCount: number;
   latestMessageDate: string;
   unread: boolean;
+}
+
+// Recursively extract plain-text body from a message payload
+function extractPlainBody(payload: Record<string, unknown> | null | undefined): string {
+  if (!payload) return "";
+  const mimeType = payload.mimeType as string | undefined;
+  const body = payload.body as { data?: string } | undefined;
+  const parts = payload.parts as Record<string, unknown>[] | undefined;
+  if (mimeType === "text/plain" && body?.data) {
+    return Buffer.from(body.data, "base64url").toString("utf-8").trim();
+  }
+  if (parts) {
+    for (const part of parts) {
+      const text = extractPlainBody(part);
+      if (text) return text;
+    }
+  }
+  return "";
 }
 
 function getOAuthClient() {
@@ -106,7 +125,7 @@ export async function listRecentThreadIds(query: string, maxResults = 50): Promi
   }
 }
 
-// Fetches full thread details for specific thread IDs
+// Fetches full thread details (including body) for specific thread IDs
 export async function getThreadDetailsById(ids: string[]): Promise<GmailThread[]> {
   if (!ids.length) return [];
   const auth = getOAuthClient();
@@ -119,18 +138,19 @@ export async function getThreadDetailsById(ids: string[]): Promise<GmailThread[]
           const thread = await gmail.users.threads.get({
             userId: "me",
             id,
-            format: "metadata",
-            metadataHeaders: ["Subject", "From", "To", "Date"],
+            format: "full",
           });
           const messages = thread.data.messages ?? [];
           const firstMsg = messages[0];
           const lastMsg = messages[messages.length - 1];
           const getHeader = (msg: typeof firstMsg, name: string) =>
             msg?.payload?.headers?.find((h) => h.name?.toLowerCase() === name.toLowerCase())?.value ?? "";
+          const body = extractPlainBody(firstMsg?.payload as Record<string, unknown> | undefined);
           return {
             id,
             subject: getHeader(firstMsg, "Subject") || "(no subject)",
             snippet: thread.data.snippet ?? "",
+            body,
             from: getHeader(firstMsg, "From"),
             to: getHeader(firstMsg, "To"),
             date: getHeader(firstMsg, "Date"),

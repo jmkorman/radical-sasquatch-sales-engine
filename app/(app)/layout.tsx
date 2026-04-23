@@ -5,6 +5,10 @@ import { Header } from "@/components/layout/Header";
 import { NavBar } from "@/components/layout/NavBar";
 import { useSheetStore } from "@/stores/useSheetStore";
 
+// Module-level state survives component remounts (navigation), preventing duplicate polls
+let gmailPollInFlight = false;
+let lastGmailPollAt = 0;
+
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const fetchAllTabs = useSheetStore((state) => state.fetchAllTabs);
 
@@ -16,13 +20,14 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       void fetchAllTabs({ silent: true });
     };
 
-    let lastGmailPollAt = 0;
     const pollGmail = () => {
       if (document.visibilityState !== "visible") return;
-      // Throttle: don't poll more than once every 10s
+      if (gmailPollInFlight) return;
       const now = Date.now();
-      if (now - lastGmailPollAt < 10_000) return;
+      // Throttle: don't poll more than once every 2 minutes
+      if (now - lastGmailPollAt < 120_000) return;
       lastGmailPollAt = now;
+      gmailPollInFlight = true;
       fetch("/api/gmail/poll")
         .then((r) => (r.ok ? r.json() : null))
         .then((result) => {
@@ -30,7 +35,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             void fetchAllTabs({ silent: true });
           }
         })
-        .catch(() => {});
+        .catch(() => {})
+        .finally(() => { gmailPollInFlight = false; });
     };
 
     const interval = window.setInterval(refreshSilently, 30000);
