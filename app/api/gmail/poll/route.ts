@@ -6,10 +6,13 @@ import { insertActivityLog, updateAccountSnapshot } from "@/lib/supabase/queries
 import { createServerClient } from "@/lib/supabase/server";
 import { getAccountStableId } from "@/lib/accounts/identity";
 import { updateCell } from "@/lib/sheets/write";
-import { getContactNameColumnIndex, getEmailColumnIndex } from "@/lib/sheets/schema";
+import { getContactNameColumnIndex, getEmailColumnIndex, getStatusColumnIndex } from "@/lib/sheets/schema";
 import { AnyAccount } from "@/types/accounts";
 
 export const dynamic = "force-dynamic";
+
+// Statuses where an email should auto-upgrade the account to "Reached Out"
+const EARLY_STAGE_STATUSES = new Set(["", "Identified"]);
 
 const OWNER_EMAIL = (process.env.GMAIL_OWNER_EMAIL ?? "jake@radicalsasquatch.com").toLowerCase();
 const GENERIC_DOMAINS = new Set([
@@ -123,6 +126,12 @@ async function logThread(account: AnyAccount, thread: GmailThread) {
     created_at: logDate,
   });
 
+  // Auto-upgrade status to "Reached Out" for early-stage accounts
+  if (EARLY_STAGE_STATUSES.has(account.status ?? "")) {
+    await updateAccountSnapshot(account.id, { status: "Reached Out" }).catch(() => {});
+    await updateCell(account._tab, account._rowIndex, getStatusColumnIndex(account._tab), "Reached Out").catch(() => {});
+  }
+
   // Auto-populate contact name + email when account fields are empty
   const contact = getContactAddr(thread);
   if (!contact) return;
@@ -205,6 +214,8 @@ export async function GET() {
     let imported = 0;
     const breakdown = { email: 0, domain: 0, name: 0 };
     const importedAccounts: string[] = [];
+    const importedAccountPaths: string[] = [];
+    const insertedThreadIds: string[] = [];
 
     for (const thread of threads) {
       // Only process threads where we are the sender
@@ -228,13 +239,31 @@ export async function GET() {
       seenThreadIds.add(thread.id);
       await logThread(match.account, thread);
       importedAccounts.push(match.account.account ?? "");
+      importedAccountPaths.push(`/accounts/${match.account._tabSlug}/${match.account._rowIndex}`);
+      insertedThreadIds.push(thread.id);
       breakdown[match.pass]++;
       imported++;
+    }
+
+    // Dedup cleanup: if concurrent requests inserted the same thread twice, soft-delete extras.
+    for (const threadId of insertedThreadIds) {
+      const { data: dupes } = await supabase
+        .from("activity_logs")
+        .select("id")
+        .eq("source", "gmail")
+        .ilike("note", `%gmail-thread:${threadId}%`)
+        .not("is_deleted", "eq", true)
+        .order("created_at", { ascending: true });
+      if (dupes && dupes.length > 1) {
+        const toDelete = dupes.slice(1).map((d: { id: string }) => d.id);
+        await supabase.from("activity_logs").update({ is_deleted: true }).in("id", toDelete);
+      }
     }
 
     return NextResponse.json({
       imported,
       importedAccounts,
+      importedAccountPaths,
       checked: allIds.length,
       accounts: accounts.length,
       breakdown,

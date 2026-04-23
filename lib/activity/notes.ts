@@ -14,6 +14,23 @@ export interface ParsedNote {
 export function parseActivityNote(note: string | null): ParsedNote {
   if (!note) return { summary: null, details: null, objection: null, nextStep: null };
 
+  // Gmail auto-logged email — detected by [gmail-thread:...] marker
+  if (note.includes("[gmail-thread:")) {
+    const subjectMatch = note.match(/\[Sent\]\s*(.+?)$/m);
+    const subject = subjectMatch ? subjectMatch[1].trim() : "Email";
+    // Strip markers so the details show only the clean email body
+    const body = note
+      .replace(/\[gmail-thread:[^\]]+\]\s*\n?/g, "")
+      .replace(/\[Sent\]\s*.+\n?\n?/, "")
+      .trim();
+    return {
+      summary: subject ? `Sent email: "${subject}"` : "Sent email",
+      details: body || null,
+      objection: null,
+      nextStep: null,
+    };
+  }
+
   const summaryMatch = note.match(/^SUMMARY:\s*(.+?)(?:\n|$)/im);
   const detailsMatch = note.match(/^DETAILS:\s*([\s\S]+?)(?:\nOBJECTION:|\nNEXT:|$)/im);
   const objectionMatch = note.match(/^OBJECTION:\s*(.+?)(?:\nNEXT:|$)/im);

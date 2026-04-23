@@ -142,7 +142,7 @@ export function ActivityLogList({
                   <span className="text-rs-cream capitalize font-semibold">{log.action_type}</span>
                   {showAccountName && (
                     <Link
-                      href={`/accounts/${log.tab}/${log.row_index}`}
+                      href={`/accounts/${log.tab.toLowerCase().replace(/\s+/g, "-")}/${log.row_index}`}
                       className="rounded-full border border-rs-cyan/35 bg-rs-cyan/10 px-2 py-0.5 text-[11px] font-semibold text-rs-cyan hover:border-rs-gold/50 hover:text-rs-gold"
                     >
                       {log.account_name || "Unknown account"}
@@ -303,7 +303,7 @@ export function ActivityLogList({
                       </Button>
                     )}
                     <Link
-                      href={`/accounts/${log.tab}/${log.row_index}`}
+                      href={`/accounts/${log.tab.toLowerCase().replace(/\s+/g, "-")}/${log.row_index}`}
                       className="text-xs text-rs-gold hover:text-rs-cream"
                     >
                       Open account

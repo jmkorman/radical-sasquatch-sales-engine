@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/Button";
 import { useTrashStore } from "@/stores/useTrashStore";
 import { useSheetStore } from "@/stores/useSheetStore";
 import { useUIStore } from "@/stores/useUIStore";
+import { tryAcquireGmailPollLock, releaseGmailPollLock } from "@/lib/gmail/clientPollLock";
 // deletedLogs from localStorage used only for the unloaded badge count
 
 const ACTION_OPTIONS = [
@@ -41,8 +42,18 @@ function getAccountFromLog(data: AllTabsData, log: ActivityLog): AnyAccount | nu
     "food-truck": data.foodTruck,
     "active-accounts": data.activeAccounts,
   };
-  const accounts = tabMap[log.tab] ?? [];
-  return accounts.find((a) => a._rowIndex === log.row_index) ?? null;
+  // Normalize log.tab to slug (stored as "Restaurants", slug is "restaurants", "food-truck", etc.)
+  const tabSlug = log.tab.toLowerCase().replace(/\s+/g, "-");
+  const accounts = tabMap[tabSlug] ?? [];
+  const byRow = accounts.find((a) => a._rowIndex === log.row_index);
+  if (byRow) return byRow;
+  // Fallback: match by account name across all tabs
+  if (log.account_name) {
+    const nameLower = log.account_name.toLowerCase();
+    const all = Object.values(tabMap).flat();
+    return all.find((a) => a.account?.toLowerCase() === nameLower) ?? null;
+  }
+  return null;
 }
 
 export function AllLogsView() {
@@ -157,6 +168,7 @@ export function AllLogsView() {
   }
 
   async function pollGmail() {
+    if (!tryAcquireGmailPollLock(true)) return; // force=true bypasses throttle for manual click
     setGmailPolling(true);
     try {
       const res = await fetch("/api/gmail/poll");
@@ -192,6 +204,7 @@ export function AllLogsView() {
       showActionFeedback("Gmail poll failed.", "error");
     } finally {
       setGmailPolling(false);
+      releaseGmailPollLock();
     }
   }
 

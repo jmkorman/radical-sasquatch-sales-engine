@@ -5,25 +5,24 @@ import Link from "next/link";
 import { Header } from "@/components/layout/Header";
 import { NavBar } from "@/components/layout/NavBar";
 import { useSheetStore } from "@/stores/useSheetStore";
+import { tryAcquireGmailPollLock, releaseGmailPollLock } from "@/lib/gmail/clientPollLock";
 
 const GMAIL_PROMPT_KEY = "gmail_review_prompt";
-
-// Module-level state survives component remounts (navigation), preventing duplicate polls
-let gmailPollInFlight = false;
-let lastGmailPollAt = 0;
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const fetchAllTabs = useSheetStore((state) => state.fetchAllTabs);
   const [reviewAccounts, setReviewAccounts] = useState<string[]>([]);
+  const [reviewPath, setReviewPath] = useState<string>("/logs");
 
   // Check localStorage on mount for any pending gmail reviews from previous session
   useEffect(() => {
     try {
       const stored = localStorage.getItem(GMAIL_PROMPT_KEY);
       if (!stored) return;
-      const parsed = JSON.parse(stored) as { accounts: string[]; ts: number };
+      const parsed = JSON.parse(stored) as { accounts: string[]; paths?: string[]; ts: number };
       if (Date.now() - parsed.ts < 24 * 60 * 60 * 1000 && parsed.accounts.length > 0) {
         setReviewAccounts(parsed.accounts);
+        if (parsed.paths?.[0]) setReviewPath(parsed.paths[0]);
       } else {
         localStorage.removeItem(GMAIL_PROMPT_KEY);
       }
@@ -40,23 +39,21 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
     const pollGmail = () => {
       if (document.visibilityState !== "visible") return;
-      if (gmailPollInFlight) return;
-      const now = Date.now();
-      // Throttle: don't poll more than once every 2 minutes
-      if (now - lastGmailPollAt < 120_000) return;
-      lastGmailPollAt = now;
-      gmailPollInFlight = true;
+      if (!tryAcquireGmailPollLock()) return;
       fetch("/api/gmail/poll")
         .then((r) => (r.ok ? r.json() : null))
-        .then((result: { imported?: number; importedAccounts?: string[] } | null) => {
+        .then((result: { imported?: number; importedAccounts?: string[]; importedAccountPaths?: string[] } | null) => {
           if (result?.imported && result.imported > 0) {
             void fetchAllTabs({ silent: true });
             const newAccounts = (result.importedAccounts ?? []).filter(Boolean);
+            const newPaths = (result.importedAccountPaths ?? []).filter(Boolean);
             if (newAccounts.length) {
               setReviewAccounts((prev) => {
                 const merged = Array.from(new Set([...prev, ...newAccounts]));
                 try {
-                  localStorage.setItem(GMAIL_PROMPT_KEY, JSON.stringify({ accounts: merged, ts: Date.now() }));
+                  const firstPath = newPaths[0] ?? "/logs";
+                  setReviewPath(firstPath);
+                  localStorage.setItem(GMAIL_PROMPT_KEY, JSON.stringify({ accounts: merged, paths: newPaths, ts: Date.now() }));
                 } catch {}
                 return merged;
               });
@@ -64,7 +61,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           }
         })
         .catch(() => {})
-        .finally(() => { gmailPollInFlight = false; });
+        .finally(() => { releaseGmailPollLock(); });
     };
 
     const interval = window.setInterval(refreshSilently, 30000);
@@ -121,11 +118,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           </div>
           <div className="flex gap-2 mt-3">
             <Link
-              href="/logs"
+              href={reviewPath}
               onClick={dismissReview}
               className="flex-1 text-center text-xs py-1.5 rounded-lg bg-rs-gold/15 text-rs-gold hover:bg-rs-gold/25 transition-colors font-medium"
             >
-              Review logs
+              Open account
             </Link>
             <button
               onClick={dismissReview}
