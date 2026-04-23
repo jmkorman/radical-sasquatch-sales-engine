@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAccountsData } from "@/lib/accounts/source";
 import { getAllAccounts } from "@/lib/accounts/snapshot";
-import { searchThreadsByEmail, searchThreadsByQuery, GmailThread } from "@/lib/gmail/threads";
+import { listRecentThreadIds, getThreadDetailsById, GmailThread } from "@/lib/gmail/threads";
 import { getActivityLogs, insertActivityLog, updateAccountSnapshot } from "@/lib/supabase/queries";
 import { getAccountStableId } from "@/lib/accounts/identity";
 import { updateCell } from "@/lib/sheets/write";
@@ -10,8 +10,11 @@ import { AnyAccount } from "@/types/accounts";
 
 export const dynamic = "force-dynamic";
 
-// The authenticated Gmail account — used to detect direction and the contact side
 const OWNER_EMAIL = (process.env.GMAIL_OWNER_EMAIL ?? "jake@radicalsasquatch.com").toLowerCase();
+const GENERIC_DOMAINS = new Set([
+  "gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "icloud.com",
+  "aol.com", "protonmail.com", "me.com", "live.com", "msn.com",
+]);
 
 function extractThreadId(note: string | null): string | null {
   if (!note) return null;
@@ -19,45 +22,80 @@ function extractThreadId(note: string | null): string | null {
   return match ? match[1] : null;
 }
 
-function parseFrom(raw: string): { name: string; email: string } {
+function parseAddr(raw: string): { name: string; email: string } {
   const match = raw.match(/^(.*?)\s*<([^>]+)>/);
-  if (match) {
-    return {
-      name: match[1].trim().replace(/^["']|["']$/g, ""),
-      email: match[2].trim().toLowerCase(),
-    };
-  }
+  if (match) return { name: match[1].trim().replace(/^["']|["']$/g, ""), email: match[2].trim().toLowerCase() };
   return { name: "", email: raw.trim().toLowerCase() };
 }
 
-function extractDomainFromUrl(url: string | undefined | null): string | null {
+function emailDomain(email: string): string | null {
+  const at = email.indexOf("@");
+  if (at < 0) return null;
+  const domain = email.slice(at + 1).toLowerCase();
+  return GENERIC_DOMAINS.has(domain) ? null : domain;
+}
+
+function extractUrlDomain(url: string | undefined | null): string | null {
   if (!url) return null;
-  const trimmed = url.trim();
-  if (!trimmed) return null;
-  const normalized = trimmed
+  const normalized = url.trim()
     .replace(/^https?:\/\//i, "")
     .replace(/^www\./i, "")
     .split(/[\/\s?#]/)[0]
     .split(":")[0]
     .toLowerCase();
-  // Reject obvious non-domains
   if (!normalized.includes(".")) return null;
-  // Skip generic domains that would match way too many emails
-  const generic = ["gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "icloud.com", "aol.com"];
-  if (generic.includes(normalized)) return null;
+  if (GENERIC_DOMAINS.has(normalized)) return null;
   return normalized;
 }
 
 function detectDirection(thread: GmailThread): "sent" | "received" {
-  const fromEmail = parseFrom(thread.from).email;
-  return fromEmail.includes(OWNER_EMAIL) ? "sent" : "received";
+  return parseAddr(thread.from).email.includes(OWNER_EMAIL) ? "sent" : "received";
 }
 
-function extractContact(thread: GmailThread): { name: string; email: string } | null {
-  const from = parseFrom(thread.from);
-  const to = parseFrom(thread.to);
+function getContactAddr(thread: GmailThread): { name: string; email: string } | null {
+  const from = parseAddr(thread.from);
+  const to = parseAddr(thread.to);
   if (from.email && !from.email.includes(OWNER_EMAIL)) return from;
   if (to.email && !to.email.includes(OWNER_EMAIL)) return to;
+  return null;
+}
+
+function getNonOwnerEmails(thread: GmailThread): string[] {
+  return [parseAddr(thread.from).email, parseAddr(thread.to).email]
+    .filter((e) => e && !e.includes(OWNER_EMAIL));
+}
+
+function matchThread(
+  thread: GmailThread,
+  emailIdx: Map<string, AnyAccount>,
+  domainIdx: Map<string, AnyAccount>,
+  accounts: AnyAccount[],
+): { account: AnyAccount; pass: "email" | "domain" | "name" } | null {
+  const contactEmails = getNonOwnerEmails(thread);
+
+  // Pass 1: exact email match
+  for (const email of contactEmails) {
+    const acc = emailIdx.get(email);
+    if (acc) return { account: acc, pass: "email" };
+  }
+
+  // Pass 2: email domain → account website or stored-email domain
+  for (const email of contactEmails) {
+    const domain = emailDomain(email);
+    if (domain) {
+      const acc = domainIdx.get(domain);
+      if (acc) return { account: acc, pass: "domain" };
+    }
+  }
+
+  // Pass 3: account name appears in subject
+  const subjectLower = thread.subject.toLowerCase();
+  for (const account of accounts) {
+    const name = account.account?.trim();
+    if (!name || name.length < 5) continue;
+    if (subjectLower.includes(name.toLowerCase())) return { account, pass: "name" };
+  }
+
   return null;
 }
 
@@ -81,10 +119,9 @@ async function logThread(account: AnyAccount, thread: GmailThread) {
     created_at: logDate,
   });
 
-  // Auto-populate contact fields when empty
-  const contact = extractContact(thread);
+  // Auto-populate contact name + email when account fields are empty
+  const contact = getContactAddr(thread);
   if (!contact) return;
-
   const needsName = !account.contactName?.trim() && contact.name;
   const needsEmail = !account.email?.trim() && contact.email;
   if (!needsName && !needsEmail) return;
@@ -92,21 +129,9 @@ async function logThread(account: AnyAccount, thread: GmailThread) {
   const snapshotUpdates: Record<string, string> = {};
   if (needsName) snapshotUpdates.contact_name = contact.name;
   if (needsEmail) snapshotUpdates.email = contact.email;
-
   await updateAccountSnapshot(account.id, snapshotUpdates).catch(() => {});
-
-  if (needsName) {
-    await updateCell(
-      account._tab, account._rowIndex,
-      getContactNameColumnIndex(account._tab), contact.name
-    ).catch(() => {});
-  }
-  if (needsEmail) {
-    await updateCell(
-      account._tab, account._rowIndex,
-      getEmailColumnIndex(account._tab), contact.email
-    ).catch(() => {});
-  }
+  if (needsName) await updateCell(account._tab, account._rowIndex, getContactNameColumnIndex(account._tab), contact.name).catch(() => {});
+  if (needsEmail) await updateCell(account._tab, account._rowIndex, getEmailColumnIndex(account._tab), contact.email).catch(() => {});
 }
 
 export async function GET() {
@@ -120,12 +145,9 @@ export async function GET() {
   try {
     const { data } = await getAccountsData();
     const accounts = getAllAccounts(data);
+    if (!accounts.length) return NextResponse.json({ imported: 0, checked: 0, accounts: 0 });
 
-    if (!accounts.length) {
-      return NextResponse.json({ imported: 0, checked: 0, accounts: 0 });
-    }
-
-    // Build set of already-seen thread IDs across all Gmail-sourced logs
+    // Build set of already-logged Gmail thread IDs
     const allLogs = await getActivityLogs();
     const seenThreadIds = new Set(
       allLogs
@@ -134,85 +156,65 @@ export async function GET() {
         .filter(Boolean) as string[]
     );
 
+    // 14-day lookback
     const since = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
     const sinceStr = `${since.getFullYear()}/${String(since.getMonth() + 1).padStart(2, "0")}/${String(since.getDate()).padStart(2, "0")}`;
 
-    let imported = 0;
-    let checked = 0;
-    const breakdown = { email: 0, domain: 0, name: 0 };
-
-    // Pass 1: Match by email address (highest confidence)
-    const emailToAccount = new Map<string, AnyAccount>();
+    // Build local match indexes — no per-account API calls
+    const emailIdx = new Map<string, AnyAccount>();
+    const domainIdx = new Map<string, AnyAccount>();
     for (const account of accounts) {
       if (account.email?.trim()) {
-        emailToAccount.set(account.email.trim().toLowerCase(), account);
+        const email = account.email.trim().toLowerCase();
+        emailIdx.set(email, account);
+        const domain = emailDomain(email);
+        if (domain && !domainIdx.has(domain)) domainIdx.set(domain, account);
       }
-    }
-    for (const [email, account] of emailToAccount) {
-      try {
-        const threads = await searchThreadsByEmail(email, { since: sinceStr });
-        checked += threads.length;
-        for (const thread of threads) {
-          if (seenThreadIds.has(thread.id)) continue;
-          seenThreadIds.add(thread.id);
-          await logThread(account, thread);
-          imported++;
-          breakdown.email++;
-        }
-      } catch (err) {
-        console.error(`Gmail poll error for email ${email}:`, err);
-      }
+      const website = (account as unknown as { website?: string }).website;
+      const urlDomain = extractUrlDomain(website);
+      if (urlDomain && !domainIdx.has(urlDomain)) domainIdx.set(urlDomain, account);
     }
 
-    // Pass 2: Match by website domain (catches new contacts at known accounts)
-    const domainToAccount = new Map<string, AnyAccount>();
-    for (const account of accounts) {
-      const website = "website" in account ? (account as { website?: string }).website : "";
-      const domain = extractDomainFromUrl(website);
-      if (domain && !domainToAccount.has(domain)) {
-        domainToAccount.set(domain, account);
-      }
-    }
-    for (const [domain, account] of domainToAccount) {
-      try {
-        const threads = await searchThreadsByQuery(
-          `(from:${domain} OR to:${domain}) after:${sinceStr}`
-        );
-        checked += threads.length;
-        for (const thread of threads) {
-          if (seenThreadIds.has(thread.id)) continue;
-          seenThreadIds.add(thread.id);
-          await logThread(account, thread);
-          imported++;
-          breakdown.domain++;
-        }
-      } catch (err) {
-        console.error(`Gmail poll error for domain ${domain}:`, err);
-      }
+    // 2 Gmail list queries total (sent + inbox) — core of the fix
+    const [sentIds, inboxIds] = await Promise.all([
+      listRecentThreadIds(`in:sent after:${sinceStr}`, 50),
+      listRecentThreadIds(`in:inbox after:${sinceStr}`, 50),
+    ]);
+
+    // Deduplicate and filter to only threads we haven't logged yet
+    const combined = new Set([...sentIds, ...inboxIds]);
+    const allIds = Array.from(combined);
+    const newIds = allIds.filter((id) => !seenThreadIds.has(id));
+
+    if (!newIds.length) {
+      return NextResponse.json({
+        imported: 0,
+        checked: allIds.length,
+        accounts: accounts.length,
+        breakdown: { email: 0, domain: 0, name: 0 },
+        lastPolledAt: new Date().toISOString(),
+      });
     }
 
-    // Pass 3: Match by account name in subject (catches forwards/renamed threads)
-    for (const account of accounts) {
-      const name = account.account?.trim();
-      if (!name || name.length < 5) continue;
-      try {
-        const threads = await searchThreadsByQuery(`subject:"${name}" after:${sinceStr}`);
-        checked += threads.length;
-        for (const thread of threads) {
-          if (seenThreadIds.has(thread.id)) continue;
-          seenThreadIds.add(thread.id);
-          await logThread(account, thread);
-          imported++;
-          breakdown.name++;
-        }
-      } catch (err) {
-        console.error(`Gmail poll error for account name "${name}":`, err);
-      }
+    // Fetch details only for unseen threads (max 20 per poll cycle)
+    const threads = await getThreadDetailsById(newIds.slice(0, 20));
+
+    let imported = 0;
+    const breakdown = { email: 0, domain: 0, name: 0 };
+
+    for (const thread of threads) {
+      if (seenThreadIds.has(thread.id)) continue;
+      const match = matchThread(thread, emailIdx, domainIdx, accounts);
+      if (!match) continue;
+      seenThreadIds.add(thread.id);
+      await logThread(match.account, thread);
+      breakdown[match.pass]++;
+      imported++;
     }
 
     return NextResponse.json({
       imported,
-      checked,
+      checked: allIds.length,
       accounts: accounts.length,
       breakdown,
       lastPolledAt: new Date().toISOString(),

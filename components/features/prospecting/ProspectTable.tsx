@@ -65,6 +65,7 @@ export function ProspectTable({ prospects, buckets, onRefresh }: ProspectTablePr
   const [showAdd, setShowAdd] = useState(false);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("open");
+  const [sourceFilter, setSourceFilter] = useState("all");
   const [running, setRunning] = useState(false);
   const [enriching, setEnriching] = useState(false);
   const [actionId, setActionId] = useState<string | null>(null);
@@ -110,6 +111,7 @@ export function ProspectTable({ prospects, buckets, onRefresh }: ProspectTablePr
           prospect.trigger_reason,
         ].join(" ").toLowerCase().includes(q);
       })
+      .filter((prospect) => sourceFilter === "all" || prospect.source === sourceFilter)
       .sort((a, b) => {
         if (a.duplicate_account_id && !b.duplicate_account_id) return 1;
         if (!a.duplicate_account_id && b.duplicate_account_id) return -1;
@@ -258,6 +260,19 @@ export function ProspectTable({ prospects, buckets, onRefresh }: ProspectTablePr
               {STATUS_FILTERS.map((option) => (
                 <option key={option.value} value={option.value}>{option.label}</option>
               ))}
+            </select>
+            <select
+              value={sourceFilter}
+              onChange={(event) => setSourceFilter(event.target.value)}
+              className="rounded-xl border border-rs-border bg-rs-bg px-3 py-2 text-sm text-rs-cream outline-none focus:border-rs-gold"
+            >
+              <option value="all">All sources</option>
+              <option value="finder">Finder</option>
+              <option value="daily-drip">Daily Drip</option>
+              <option value="ig-scan">Instagram</option>
+              <option value="permit-watch">Permits</option>
+              <option value="job-scan">Job Boards</option>
+              <option value="manual">Manual</option>
             </select>
             <Button onClick={() => setShowAdd(true)} variant="secondary">Add Prospect</Button>
             <Button onClick={runFinder} disabled={running}>{running ? "Running..." : "Run Finder"}</Button>

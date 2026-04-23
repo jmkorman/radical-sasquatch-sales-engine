@@ -19,15 +19,14 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     let lastGmailPollAt = 0;
     const pollGmail = () => {
       if (document.visibilityState !== "visible") return;
-      // Throttle: don't poll more than once every 30s
+      // Throttle: don't poll more than once every 10s
       const now = Date.now();
-      if (now - lastGmailPollAt < 30_000) return;
+      if (now - lastGmailPollAt < 10_000) return;
       lastGmailPollAt = now;
       fetch("/api/gmail/poll")
         .then((r) => (r.ok ? r.json() : null))
         .then((result) => {
           if (result?.imported > 0) {
-            // Refresh account data so newly-populated contact info appears immediately
             void fetchAllTabs({ silent: true });
           }
         })
@@ -38,9 +37,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     window.addEventListener("focus", refreshSilently);
     document.addEventListener("visibilitychange", refreshSilently);
 
-    // Poll Gmail: on mount (after 10s delay), every 2 minutes, and when the window regains focus
-    const gmailTimeout = window.setTimeout(pollGmail, 10000);
-    const gmailInterval = window.setInterval(pollGmail, 2 * 60 * 1000);
+    // Poll Gmail: on mount (after 5s), every 60s, and whenever window regains focus
+    const gmailTimeout = window.setTimeout(pollGmail, 5000);
+    const gmailInterval = window.setInterval(pollGmail, 60 * 1000);
     window.addEventListener("focus", pollGmail);
     document.addEventListener("visibilitychange", pollGmail);
 

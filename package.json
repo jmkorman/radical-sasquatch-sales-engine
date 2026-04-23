@@ -9,6 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
     "@auth/core": "^0.37.2",
     "@notionhq/client": "^5.18.0",
     "@supabase/ssr": "^0.10.2",

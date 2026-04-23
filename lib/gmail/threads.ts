@@ -92,6 +92,64 @@ async function runGmailQuery(query: string): Promise<GmailThread[]> {
   );
 }
 
+// Efficiently lists thread IDs matching a query without fetching full message data
+export async function listRecentThreadIds(query: string, maxResults = 50): Promise<string[]> {
+  const auth = getOAuthClient();
+  if (!auth) return [];
+  try {
+    const gmail = google.gmail({ version: "v1", auth });
+    const res = await gmail.users.threads.list({ userId: "me", q: query, maxResults });
+    return res.data.threads?.map((t) => t.id!).filter(Boolean) ?? [];
+  } catch (error) {
+    console.error("Gmail listRecentThreadIds error:", error);
+    return [];
+  }
+}
+
+// Fetches full thread details for specific thread IDs
+export async function getThreadDetailsById(ids: string[]): Promise<GmailThread[]> {
+  if (!ids.length) return [];
+  const auth = getOAuthClient();
+  if (!auth) return [];
+  try {
+    const gmail = google.gmail({ version: "v1", auth });
+    const details = await Promise.all(
+      ids.slice(0, 25).map(async (id) => {
+        try {
+          const thread = await gmail.users.threads.get({
+            userId: "me",
+            id,
+            format: "metadata",
+            metadataHeaders: ["Subject", "From", "To", "Date"],
+          });
+          const messages = thread.data.messages ?? [];
+          const firstMsg = messages[0];
+          const lastMsg = messages[messages.length - 1];
+          const getHeader = (msg: typeof firstMsg, name: string) =>
+            msg?.payload?.headers?.find((h) => h.name?.toLowerCase() === name.toLowerCase())?.value ?? "";
+          return {
+            id,
+            subject: getHeader(firstMsg, "Subject") || "(no subject)",
+            snippet: thread.data.snippet ?? "",
+            from: getHeader(firstMsg, "From"),
+            to: getHeader(firstMsg, "To"),
+            date: getHeader(firstMsg, "Date"),
+            messageCount: messages.length,
+            latestMessageDate: getHeader(lastMsg, "Date") || getHeader(firstMsg, "Date"),
+            unread: messages.some((m) => m.labelIds?.includes("UNREAD")),
+          } as GmailThread;
+        } catch {
+          return null;
+        }
+      })
+    );
+    return details.filter(Boolean) as GmailThread[];
+  } catch (error) {
+    console.error("Gmail getThreadDetailsById error:", error);
+    return [];
+  }
+}
+
 export async function searchThreadsByEmail(
   email: string,
   options?: { since?: string }
