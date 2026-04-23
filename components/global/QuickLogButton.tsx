@@ -387,7 +387,7 @@ export function QuickLogButton() {
                 onChange={(e) => setAddToHitListChecked(e.target.checked)}
                 className="rounded border-[#3a2f6e] bg-[#100726] accent-rs-cyan"
               />
-              <span className="text-[#af9fe6]">Add to today's hit list</span>
+              <span className="text-[#af9fe6]">Add to today&apos;s hit list</span>
             </label>
 
             <div className="flex justify-end gap-2">

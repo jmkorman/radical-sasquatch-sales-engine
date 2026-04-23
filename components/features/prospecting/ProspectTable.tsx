@@ -117,7 +117,7 @@ export function ProspectTable({ prospects, buckets, onRefresh }: ProspectTablePr
         if (!a.duplicate_account_id && b.duplicate_account_id) return -1;
         return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
       });
-  }, [prospects, search, status]);
+  }, [prospects, search, status, sourceFilter]);
 
   const grouped = useMemo(() => {
     const now = Date.now();

@@ -54,7 +54,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             const newAccounts = (result.importedAccounts ?? []).filter(Boolean);
             if (newAccounts.length) {
               setReviewAccounts((prev) => {
-                const merged = [...new Set([...prev, ...newAccounts])];
+                const merged = Array.from(new Set([...prev, ...newAccounts]));
                 try {
                   localStorage.setItem(GMAIL_PROMPT_KEY, JSON.stringify({ accounts: merged, ts: Date.now() }));
                 } catch {}
