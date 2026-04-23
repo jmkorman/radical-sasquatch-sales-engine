@@ -152,13 +152,14 @@ export async function GET() {
     if (!accounts.length) return NextResponse.json({ imported: 0, checked: 0, accounts: 0 });
 
     // Build set of already-logged Gmail thread IDs.
-    // Direct query without is_deleted filter — gmail entries are inserted without
-    // is_deleted set, so null != false would exclude them from getActivityLogs().
+    // Use limit(5000) and no is_deleted filter — gmail entries may have is_deleted=null
+    // which makes null!=false exclude them from the standard getActivityLogs() query.
     const supabase = createServerClient();
     const { data: gmailNotes } = await supabase
       .from("activity_logs")
       .select("note")
-      .eq("source", "gmail");
+      .eq("source", "gmail")
+      .limit(5000);
     const seenThreadIds = new Set<string>(
       (gmailNotes ?? [])
         .map((r) => extractThreadId(r.note as string | null))
@@ -203,18 +204,20 @@ export async function GET() {
 
     let imported = 0;
     const breakdown = { email: 0, domain: 0, name: 0 };
+    const importedAccounts: string[] = [];
 
     for (const thread of threads) {
       // Only process threads where we are the sender
       if (!isSent(thread)) continue;
       if (seenThreadIds.has(thread.id)) continue;
 
-      // Per-thread DB check — handles concurrent polls and pagination limits
+      // Per-thread DB check — avoids brackets in LIKE since PostgREST URL-encodes
+      // them, breaking the pattern match. "gmail-thread:ID" is unique enough.
       const { count } = await supabase
         .from("activity_logs")
         .select("id", { count: "exact", head: true })
         .eq("source", "gmail")
-        .like("note", `%[gmail-thread:${thread.id}]%`);
+        .ilike("note", `%gmail-thread:${thread.id}%`);
       if (count && count > 0) {
         seenThreadIds.add(thread.id);
         continue;
@@ -224,12 +227,14 @@ export async function GET() {
       if (!match) continue;
       seenThreadIds.add(thread.id);
       await logThread(match.account, thread);
+      importedAccounts.push(match.account.account ?? "");
       breakdown[match.pass]++;
       imported++;
     }
 
     return NextResponse.json({
       imported,
+      importedAccounts,
       checked: allIds.length,
       accounts: accounts.length,
       breakdown,
