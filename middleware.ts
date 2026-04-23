@@ -51,7 +51,7 @@ export async function middleware(request: NextRequest) {
   }
 
   if (
-    pathname === "/api/prospects/run" &&
+    pathname.startsWith("/api/prospects/") &&
     (
       (process.env.CRON_SECRET && request.headers.get("authorization") === `Bearer ${process.env.CRON_SECRET}`) ||
       request.headers.get("user-agent")?.toLowerCase().includes("vercel-cron")
