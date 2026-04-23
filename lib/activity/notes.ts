@@ -14,7 +14,23 @@ export interface ParsedNote {
 export function parseActivityNote(note: string | null): ParsedNote {
   if (!note) return { summary: null, details: null, objection: null, nextStep: null };
 
-  // Gmail auto-logged email — detected by [gmail-thread:...] marker
+  // Structured format takes priority — even if note also contains a [gmail-thread:] marker
+  // (which happens after a Gmail log is edited and saved with the thread ID preserved at end)
+  const summaryMatch = note.match(/^SUMMARY:\s*(.+?)(?:\n|$)/im);
+  const detailsMatch = note.match(/^DETAILS:\s*([\s\S]+?)(?:\n\[gmail-thread:|\nOBJECTION:|\nNEXT:|$)/im);
+  const objectionMatch = note.match(/^OBJECTION:\s*(.+?)(?:\nNEXT:|$)/im);
+  const nextMatch = note.match(/^NEXT:\s*(.+?)$/im);
+
+  if (summaryMatch || detailsMatch || objectionMatch || nextMatch) {
+    return {
+      summary: summaryMatch ? summaryMatch[1].trim() : null,
+      details: detailsMatch ? detailsMatch[1].trim() : null,
+      objection: objectionMatch ? objectionMatch[1].trim() : null,
+      nextStep: nextMatch ? nextMatch[1].trim() : null,
+    };
+  }
+
+  // Gmail auto-logged email (unedited) — detected by [gmail-thread:...] marker
   if (note.includes("[gmail-thread:")) {
     const subjectMatch = note.match(/\[Sent\]\s*(.+?)$/m);
     const subject = subjectMatch ? subjectMatch[1].trim() : "Email";
@@ -28,20 +44,6 @@ export function parseActivityNote(note: string | null): ParsedNote {
       details: body || null,
       objection: null,
       nextStep: null,
-    };
-  }
-
-  const summaryMatch = note.match(/^SUMMARY:\s*(.+?)(?:\n|$)/im);
-  const detailsMatch = note.match(/^DETAILS:\s*([\s\S]+?)(?:\nOBJECTION:|\nNEXT:|$)/im);
-  const objectionMatch = note.match(/^OBJECTION:\s*(.+?)(?:\nNEXT:|$)/im);
-  const nextMatch = note.match(/^NEXT:\s*(.+?)$/im);
-
-  if (summaryMatch || detailsMatch || objectionMatch || nextMatch) {
-    return {
-      summary: summaryMatch ? summaryMatch[1].trim() : null,
-      details: detailsMatch ? detailsMatch[1].trim() : null,
-      objection: objectionMatch ? objectionMatch[1].trim() : null,
-      nextStep: nextMatch ? nextMatch[1].trim() : null,
     };
   }
 

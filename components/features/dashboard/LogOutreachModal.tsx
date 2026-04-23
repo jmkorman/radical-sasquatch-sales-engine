@@ -99,6 +99,7 @@ export function LogOutreachModal({
   const [followUpDate, setFollowUpDate] = useState(initialLog?.follow_up_date || "");
   const [showCalendar, setShowCalendar] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const isBackburner = statusAfter === "Backburner";
 
@@ -130,13 +131,14 @@ export function LogOutreachModal({
       nextStep: nextMove,
     });
 
-    if (!note) return;
-
+    setSaveError(null);
     setSubmitting(true);
     try {
       await onSubmit({ actionType, statusAfter, note, followUpDate, nextActionType });
       onClose();
-    } catch {
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Save failed — please try again.";
+      setSaveError(msg);
       setSubmitting(false);
     }
   };
@@ -339,11 +341,16 @@ export function LogOutreachModal({
           )}
         </div>
 
+        {saveError && (
+          <div className="rounded-xl border border-rs-punch/50 bg-rs-punch/10 px-3 py-2 text-sm text-[#ffd6e8]">
+            {saveError}
+          </div>
+        )}
         <div className="flex gap-2 justify-end pt-2">
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={handleSubmit} disabled={submitting || (!summary.trim() && !details.trim())}>
+          <Button onClick={handleSubmit} disabled={submitting || (!summary.trim() && !details.trim() && !followUpDate)}>
             {submitting ? "Saving..." : submitLabel ?? "Log Outreach"}
           </Button>
         </div>

@@ -98,9 +98,15 @@ export function AllLogsView() {
   }
 
   function handleEditOutreach(log: ActivityLog) {
-    if (!data) return;
+    if (!data) {
+      showActionFeedback("Pipeline data still loading — try again in a moment.", "error");
+      return;
+    }
     const account = getAccountFromLog(data, log);
-    if (!account) return;
+    if (!account) {
+      showActionFeedback("Couldn't find the account for this log. Try refreshing the page.", "error");
+      return;
+    }
     setEditingOutreachLog(log);
     setEditingOutreachAccount(account);
   }
@@ -113,14 +119,23 @@ export function AllLogsView() {
     nextActionType: string;
   }) {
     if (!editingOutreachLog) return;
+
+    // Preserve the Gmail thread ID marker so next poll dedup still works.
+    // Append it at the END so parseActivityNote hits SUMMARY: format first.
+    let noteToSave = formData.note;
+    const gmailMarker = editingOutreachLog.note?.match(/\[gmail-thread:[^\]]+\]/)?.[0];
+    if (gmailMarker && !noteToSave.includes(gmailMarker)) {
+      noteToSave = noteToSave ? `${noteToSave}\n${gmailMarker}` : gmailMarker;
+    }
+
     const res = await fetch("/api/activity", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         id: editingOutreachLog.id,
         action_type: formData.actionType,
-        note: formData.note,
-        status_before: editingOutreachLog.status_before,
+        note: noteToSave,
+        status_before: editingOutreachLog.status_before || null,
         status_after: formData.statusAfter,
         follow_up_date: formData.followUpDate || null,
         next_action_type: formData.nextActionType || null,
@@ -128,7 +143,10 @@ export function AllLogsView() {
         counts_as_contact: true,
       }),
     });
-    if (!res.ok) throw new Error("Failed to update outreach");
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error((body as { error?: string }).error || "Failed to save — please try again.");
+    }
     const hadPending = pendingGmailLogs.length > 0;
     setEditingOutreachLog(null);
     setEditingOutreachAccount(null);

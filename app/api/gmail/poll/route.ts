@@ -100,6 +100,23 @@ function matchThread(
     if (subjectLower.includes(name.toLowerCase())) return { account, pass: "name" };
   }
 
+  // Pass 4: fuzzy — email domain base contains a significant word from the account name
+  // Catches cases like "westfaxbrewco.com" matching "Westfax Brewing"
+  for (const email of contactEmails) {
+    const domain = emailDomain(email);
+    if (!domain) continue;
+    const domainBase = domain.split(".")[0].toLowerCase();
+    if (domainBase.length < 4) continue;
+    for (const account of accounts) {
+      const name = account.account?.trim();
+      if (!name) continue;
+      const words = name.toLowerCase().split(/\s+/).filter((w) => w.length >= 5);
+      if (words.some((w) => domainBase.includes(w) || w.includes(domainBase))) {
+        return { account, pass: "name" };
+      }
+    }
+  }
+
   return null;
 }
 
