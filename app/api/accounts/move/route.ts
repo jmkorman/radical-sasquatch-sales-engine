@@ -11,7 +11,7 @@ import {
   upsertAccountSnapshot,
 } from "@/lib/supabase/queries";
 import { createServerClient } from "@/lib/supabase/server";
-import { TAB_NAME_TO_SLUG } from "@/lib/utils/constants";
+import { TAB_NAME_TO_SLUG, TAB_SLUG_MAP } from "@/lib/utils/constants";
 import { AnyAccount, TabName, TabSlug } from "@/types/accounts";
 import { logError } from "@/lib/errors/log";
 
@@ -29,6 +29,16 @@ const ALLOWED_TARGETS: TabName[] = [
 
 function clean(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+/**
+ * Accept either a TabName ("Restaurants") or TabSlug ("restaurants") and
+ * return the canonical TabName. Returns null if the input doesn't match.
+ */
+function toTabName(value: string): TabName | null {
+  if ((ALLOWED_TARGETS as readonly string[]).includes(value)) return value as TabName;
+  if (value in TAB_SLUG_MAP) return TAB_SLUG_MAP[value as TabSlug];
+  return null;
 }
 
 /**
@@ -111,11 +121,11 @@ function buildRow(tab: TabName, account: AnyAccount): string[] {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const sourceTab = clean(body.sourceTab) as TabName;
+    const sourceTab = toTabName(clean(body.sourceTab));
+    const targetTab = toTabName(clean(body.targetTab));
     const sourceRowIndex = Number(body.sourceRowIndex);
-    const targetTab = clean(body.targetTab) as TabName;
 
-    if (!ALLOWED_TARGETS.includes(targetTab)) {
+    if (!targetTab || !ALLOWED_TARGETS.includes(targetTab)) {
       return NextResponse.json({ error: "Invalid target tab" }, { status: 400 });
     }
     if (!sourceTab || !sourceRowIndex) {
@@ -156,6 +166,17 @@ export async function POST(request: NextRequest) {
       return match ? Number(match[1]) : null;
     })();
 
+    if (newRowIndex == null || !Number.isFinite(newRowIndex)) {
+      // Without a real new row index we can't safely point Supabase children
+      // at the right row. Fail loudly instead of silently using the stale
+      // source row index, which could collide with another account.
+      await logError("accounts/move/append", new Error("missing newRowIndex"), {
+        targetTab,
+        appendResponse: newRowResp ?? null,
+      });
+      return NextResponse.json({ error: "Move failed: could not resolve new row" }, { status: 500 });
+    }
+
     // 2) Update Supabase: delete old snapshot, insert new one with the new tab/row
     await deleteAccountSnapshot(account.id).catch(() => {});
 
@@ -163,7 +184,7 @@ export async function POST(request: NextRequest) {
       ...account,
       _tab: targetTab,
       _tabSlug: targetTabSlug,
-      _rowIndex: newRowIndex ?? account._rowIndex,
+      _rowIndex: newRowIndex,
       id: buildStableAccountId(targetTabSlug, account.account),
     } as AnyAccount;
 

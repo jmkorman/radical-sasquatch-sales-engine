@@ -15,6 +15,7 @@ const PIPELINE_RANK: Record<string, number> = {
   "Sample Sent": 4,
   "Tasting Complete": 5,
   "Decision Pending": 6,
+  "Active Account": 7,
   "Closed - Won": 7,
 };
 

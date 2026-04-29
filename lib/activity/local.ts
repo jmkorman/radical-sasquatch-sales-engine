@@ -35,14 +35,14 @@ function getActivityFingerprint(log: ActivityLog): string {
 
 export function outreachEntriesToActivityLogs(entries: OutreachEntry[]): ActivityLog[] {
   return entries.map((entry) => {
-    const parts = entry.account_id.split("_");
-    const rowIndex = Number.parseInt(parts[parts.length - 1] ?? "0", 10);
-
+    // Stable account IDs use the format "tabSlug:normalizedName" and don't
+    // carry a row index. Legacy outreach entries had no row index either, so
+    // default to 0.
     return {
       id: entry.id,
       account_id: entry.account_id,
       tab: entry.tab,
-      row_index: Number.isFinite(rowIndex) ? rowIndex : 0,
+      row_index: 0,
       account_name: entry.account_name,
       action_type: entry.action_type as ActionType,
       note: entry.note || null,

@@ -37,8 +37,8 @@ export function getScheduledFollowUpLogForAccount(logs: ActivityLog[], account: 
     .filter((log) => Boolean(log.follow_up_date))
     .sort(
       (a, b) =>
-        new Date(b.created_at).getTime() -
-        new Date(a.created_at).getTime()
+        new Date(a.follow_up_date as string).getTime() -
+        new Date(b.follow_up_date as string).getTime()
     )[0] ?? null;
 }
 

@@ -177,7 +177,7 @@ function ActiveAccountsPageContent() {
   }, []);
 
   const finalizeDelete = async (account: AnyAccount, entry: DeletedEntry) => {
-    const accountId = `${account._tabSlug}_${account._rowIndex}`;
+    const accountId = getAccountPrimaryId(account);
     try {
       const response = await fetch("/api/sheets/update", {
         method: "POST",
@@ -217,7 +217,7 @@ function ActiveAccountsPageContent() {
   };
 
   const handleDelete = async (account: AnyAccount) => {
-    const accountId = `${account._tabSlug}_${account._rowIndex}`;
+    const accountId = getAccountPrimaryId(account);
     const entry: DeletedEntry = {
       id: accountId,
       account_id: accountId,
@@ -382,7 +382,7 @@ function ActiveAccountsPageContent() {
   const visibleAccounts = useMemo(() => {
     const normalized = search.trim().toLowerCase();
     const filtered = accounts.filter((account) => {
-      const accountId = `${account._tabSlug}_${account._rowIndex}`;
+      const accountId = getAccountPrimaryId(account);
       if (pendingDeleteIds.includes(accountId)) return false;
       if (statusFilter && account.status !== statusFilter) return false;
       if (!normalized) return true;
@@ -400,13 +400,14 @@ function ActiveAccountsPageContent() {
     });
 
     const focusFiltered = filtered.filter((account) => {
-      const accountId = `${account._tabSlug}_${account._rowIndex}`;
+      const accountId = getAccountPrimaryId(account);
 
       if (staleness !== "all") {
         const last = latestContactByAccount[accountId]?.created_at || account.contactDate;
         const since = daysSince(last);
         const threshold = staleness === "14" ? 14 : 30;
-        if (since === null || since < threshold) return false;
+        // Treat never-contacted accounts (since === null) as ancient and include them.
+        if (since !== null && since < threshold) return false;
       }
 
       if (!focus) return true;
@@ -422,8 +423,8 @@ function ActiveAccountsPageContent() {
     });
 
     return [...focusFiltered].sort((a, b) => {
-      const idA = `${a._tabSlug}_${a._rowIndex}`;
-      const idB = `${b._tabSlug}_${b._rowIndex}`;
+      const idA = getAccountPrimaryId(a);
+      const idB = getAccountPrimaryId(b);
       if (sortBy === "name") return a.account.localeCompare(b.account);
       if (sortBy === "oldest") {
         const aDate = latestContactByAccount[idA]?.created_at || a.contactDate;
@@ -640,7 +641,7 @@ function ActiveAccountsPageContent() {
           ) : (
             <div className="space-y-2">
               {visibleAccounts.map((account) => {
-                const accountId = `${account._tabSlug}_${account._rowIndex}`;
+                const accountId = getAccountPrimaryId(account);
                 const latestContact = latestContactByAccount[accountId];
                 const followUpDate = nextFollowUpByAccount[accountId];
                 const followUp = followUpTone(followUpDate);

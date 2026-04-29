@@ -1,10 +1,5 @@
 {
   "crons": [
-    { "path": "/api/notion/sync",            "schedule": "0 0 * * *" },
-    { "path": "/api/prospects/run",          "schedule": "0 15 * * 1" },
-    { "path": "/api/prospects/daily-drip",   "schedule": "0 13 * * *" },
-    { "path": "/api/prospects/ig-scan",      "schedule": "30 13 * * 2,5" },
-    { "path": "/api/prospects/job-scan",     "schedule": "0 14 * * 3" },
-    { "path": "/api/prospects/permit-watch", "schedule": "0 14 * * 1" }
+    { "path": "/api/notion/sync", "schedule": "0 0 * * *" }
   ]
 }

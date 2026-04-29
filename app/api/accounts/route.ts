@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { appendRow } from "@/lib/sheets/write";
 import { accountsForTab, getAccountsData } from "@/lib/accounts/source";
 import { buildStableAccountId, normalizeAccountName } from "@/lib/accounts/identity";
-import { toAccountSnapshot } from "@/lib/accounts/snapshot";
+import { getAllAccounts, toAccountSnapshot } from "@/lib/accounts/snapshot";
 import { upsertAccountSnapshot } from "@/lib/supabase/queries";
 import { STATUS_VALUES, TAB_NAME_TO_SLUG } from "@/lib/utils/constants";
 import { AnyAccount, StatusValue, TabName } from "@/types/accounts";
@@ -235,14 +235,18 @@ export async function POST(request: NextRequest) {
     const { data } = await getAccountsData();
     const tabAccounts = accountsForTab(data, tab);
     const requestedAccountName = clean(body.account);
-    const duplicate = tabAccounts.find(
-      (existing) => normalizeAccountName(existing.account) === normalizeAccountName(requestedAccountName)
+    const requestedNorm = normalizeAccountName(requestedAccountName);
+    const duplicate = getAllAccounts(data).find(
+      (existing) => normalizeAccountName(existing.account) === requestedNorm
     );
 
     if (duplicate) {
+      const sameTab = duplicate._tab === tab;
       return NextResponse.json(
         {
-          error: `${duplicate.account} already exists in ${tab}.`,
+          error: sameTab
+            ? `${duplicate.account} already exists in ${tab}.`
+            : `${duplicate.account} already exists in ${duplicate._tab}. Move it from there instead of adding a duplicate.`,
           duplicate: {
             account: duplicate.account,
             tab: duplicate._tab,

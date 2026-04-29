@@ -180,7 +180,7 @@ export default function OrdersPage() {
       list = list.filter((o) => o.status !== "Canceled" && o.status !== "Delivered" && o.status !== "Invoiced/Paid");
     }
     if (statusFilter !== "all") list = list.filter((o) => o.status === statusFilter);
-    if (accountFilter !== "all") list = list.filter((o) => o.account_id === accountFilter || o.account_name === accountFilter);
+    if (accountFilter !== "all") list = list.filter((o) => o.account_id === accountFilter);
 
     if (sortKey === "amount") {
       list = [...list].sort((a, b) => (b.amount || 0) - (a.amount || 0));

@@ -2,6 +2,7 @@ import { AnyAccount, AllTabsData } from "@/types/accounts";
 import { ActivityLog } from "@/types/activity";
 import { daysSince, parseDateFromText } from "@/lib/utils/dates";
 import { getLatestContactLogForAccount } from "@/lib/activity/timeline";
+import { normalizeAccountName } from "@/lib/accounts/identity";
 
 export interface HitListItem {
   account: AnyAccount;
@@ -30,8 +31,8 @@ export function buildHitList(
   // (still in the source pipeline tab while the new Active row already exists).
   const activeNames = new Set(
     data.activeAccounts
-      .map((a) => a.account?.trim().toLowerCase())
-      .filter((name): name is string => Boolean(name))
+      .map((a) => normalizeAccountName(a.account ?? ""))
+      .filter((name) => Boolean(name))
   );
 
   const items: HitListItem[] = [];
@@ -40,7 +41,7 @@ export function buildHitList(
     // Skip terminal/closed statuses and blank records
     if (["Closed - Won", "Not a Fit", "Not Interested", ""].includes(account.status)) continue;
     if (!account.account) continue;
-    if (activeNames.has(account.account.trim().toLowerCase())) continue;
+    if (activeNames.has(normalizeAccountName(account.account))) continue;
 
     const lastActivity = getLatestContactLogForAccount(logs, account);
 

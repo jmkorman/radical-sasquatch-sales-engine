@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { hasAnthropic } from "@/lib/prospecting/shared/anthropic";
+import { hasAnthropic } from "@/lib/ai/anthropic";
 import { decodeHtmlEntities } from "@/lib/utils/htmlEntities";
 
 export interface EmailSummary {

@@ -1,4 +1,4 @@
-import { generateJSON, hasAnthropic } from "@/lib/prospecting/shared/anthropic";
+import { generateJSON, hasAnthropic } from "@/lib/ai/anthropic";
 import { STATUS_VALUES } from "@/lib/utils/constants";
 
 export interface AnalyzeEmailInput {

@@ -183,37 +183,32 @@ export async function clearOtherFollowUpDates(
 ) {
   const supabase = createServerClient();
 
-  async function clearByAccountId(accountId: string) {
-    if (!accountId) return;
-    let query = supabase
-      .from("activity_logs")
-      .update({ follow_up_date: null })
-      .eq("account_id", accountId);
-
-    if (keepLogId) query = query.neq("id", keepLogId);
-
-    const { error } = await query;
-    if (error) throw error;
-  }
-
-  await clearByAccountId(log.account_id);
-
+  // Build a single OR predicate that matches all the legacy/new identity
+  // shapes for an account. Doing this in one UPDATE eliminates the race
+  // window where partial state could be observed between sequential calls.
+  const orParts: string[] = [];
+  if (log.account_id) orParts.push(`account_id.eq.${log.account_id}`);
   if (log.tab && log.row_index) {
-    await clearByAccountId(`${log.tab}_${log.row_index}`);
+    orParts.push(`account_id.eq.${log.tab}_${log.row_index}`);
   }
-
   if (log.tab && log.account_name) {
-    let query = supabase
-      .from("activity_logs")
-      .update({ follow_up_date: null })
-      .eq("tab", log.tab)
-      .eq("account_name", log.account_name);
-
-    if (keepLogId) query = query.neq("id", keepLogId);
-
-    const { error } = await query;
-    if (error) throw error;
+    // Escape any commas in the account name so the OR parser doesn't
+    // mis-tokenize it.
+    const safeName = log.account_name.replace(/,/g, "\\,");
+    orParts.push(`and(tab.eq.${log.tab},account_name.eq.${safeName})`);
   }
+
+  if (orParts.length === 0) return;
+
+  let query = supabase
+    .from("activity_logs")
+    .update({ follow_up_date: null })
+    .or(orParts.join(","));
+
+  if (keepLogId) query = query.neq("id", keepLogId);
+
+  const { error } = await query;
+  if (error) throw error;
 }
 
 export async function getActivityLogs(accountId?: string): Promise<ActivityLog[]> {

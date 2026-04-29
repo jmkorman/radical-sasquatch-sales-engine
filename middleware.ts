@@ -50,16 +50,6 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  if (
-    pathname.startsWith("/api/prospects/") &&
-    (
-      (process.env.CRON_SECRET && request.headers.get("authorization") === `Bearer ${process.env.CRON_SECRET}`) ||
-      request.headers.get("user-agent")?.toLowerCase().includes("vercel-cron")
-    )
-  ) {
-    return NextResponse.next();
-  }
-
   const token = request.cookies.get("app_session")?.value;
   const authenticated = token ? await verifySessionToken(token) : false;
 

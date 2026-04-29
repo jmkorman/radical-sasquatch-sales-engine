@@ -29,7 +29,6 @@ const NAV_ITEMS: NavItem[] = [
   { kind: "nav", label: "Active Accounts", href: "/active-accounts", hint: "Customer roster", keywords: ["active", "accounts", "roster", "customers"] },
   { kind: "nav", label: "Orders", href: "/orders", hint: "Production bridge", keywords: ["orders", "production", "fulfill"] },
   { kind: "nav", label: "Logs", href: "/logs", hint: "Activity timeline", keywords: ["logs", "activity", "timeline", "journal"] },
-  { kind: "nav", label: "Prospecting", href: "/prospecting", hint: "Find new leads", keywords: ["prospecting", "leads", "prospects"] },
   { kind: "nav", label: "Settings", href: "/settings", hint: "Configure workspace", keywords: ["settings", "config", "preferences"] },
   { kind: "nav", label: "Follow-Ups Due", href: "/active-accounts?focus=overdue-followup", hint: "Overdue contacts", keywords: ["follow", "overdue", "due"] },
   { kind: "nav", label: "Today's Follow-Ups", href: "/active-accounts?focus=today-followup", hint: "On the docket", keywords: ["follow", "today"] },

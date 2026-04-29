@@ -11,7 +11,6 @@ import { createServerClient } from "@/lib/supabase/server";
 import { insertActivityLog, updateAccountSnapshot, updateActivityLog } from "@/lib/supabase/queries";
 import { AnyAccount } from "@/types/accounts";
 import { captureInboundContact } from "@/lib/contacts/autoCapture";
-import { captureUnmatchedDomain } from "@/lib/contacts/captureUnmatchedDomain";
 import { decodeHtmlEntities } from "@/lib/utils/htmlEntities";
 import { isPromotion } from "@/lib/utils/statusRank";
 import { logError } from "@/lib/errors/log";
@@ -384,7 +383,6 @@ export async function GET() {
     const importedAccounts: string[] = [];
     const importedAccountPaths: string[] = [];
     const importedLogIds: string[] = [];
-    const unmatchedCaptured: string[] = [];
 
     for (const message of messages) {
       if (!isSent(message)) continue;
@@ -437,19 +435,6 @@ export async function GET() {
 
       const match = matchMessage(message, emailIdx, domainIdx, accounts);
       if (!match) {
-        // Email went to / came from someone NOT in any existing account.
-        // Capture as a prospect so leads aren't lost — e.g. you email
-        // mark@luckys.com and Lucky's gets auto-created as a prospect.
-        const recipient = getContactAddr(message);
-        if (recipient?.email) {
-          unmatchedCaptured.push(recipient.email);
-          await captureUnmatchedDomain({
-            email: recipient.email,
-            name: recipient.name,
-            subject: message.subject,
-            direction: "outbound",
-          }).catch((err) => logError("gmail-poll/unmatched-outbound", err, { messageId: message.id }));
-        }
         continue;
       }
 
@@ -546,17 +531,6 @@ export async function GET() {
 
           if (!accountId) {
             inboundCapture.skipped++;
-            // Reply from a domain not in the pipeline — auto-create a prospect
-            // so it shows up in /prospecting for review.
-            unmatchedCaptured.push(sender.email);
-            await captureUnmatchedDomain({
-              email: sender.email,
-              name: sender.name,
-              subject: message.subject,
-              direction: "inbound",
-            }).catch((err) =>
-              logError("gmail-poll/unmatched-inbound", err, { messageId: message.id })
-            );
             continue;
           }
 
@@ -685,7 +659,6 @@ export async function GET() {
       breakdown,
       inboundCapture,
       inboundAnalysis,
-      unmatchedCaptured: Array.from(new Set(unmatchedCaptured)),
       lastPolledAt: new Date().toISOString(),
     });
   } catch (error) {
