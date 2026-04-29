@@ -1,7 +1,7 @@
 import { AnyAccount, AllTabsData } from "@/types/accounts";
 import { ActivityLog } from "@/types/activity";
 import { daysSince, parseDateFromText } from "@/lib/utils/dates";
-import { getAllAccounts, getLatestContactLogForAccount } from "@/lib/activity/timeline";
+import { getLatestContactLogForAccount } from "@/lib/activity/timeline";
 
 export interface HitListItem {
   account: AnyAccount;
@@ -15,7 +15,24 @@ export function buildHitList(
   data: AllTabsData,
   logs: ActivityLog[]
 ): HitListItem[] {
-  const allAccounts: AnyAccount[] = getAllAccounts(data);
+  // Hit list is for *pipeline* accounts only. Once an account is moved to
+  // Active Accounts it's a customer — reorder cadence is tracked separately
+  // and we don't want stale follow-up dates from the pipeline tab to keep
+  // surfacing it as "overdue".
+  const allAccounts: AnyAccount[] = [
+    ...data.restaurants,
+    ...data.retail,
+    ...data.catering,
+    ...data.foodTruck,
+  ];
+
+  // Active account names — used as a safety net in case a row is mid-migration
+  // (still in the source pipeline tab while the new Active row already exists).
+  const activeNames = new Set(
+    data.activeAccounts
+      .map((a) => a.account?.trim().toLowerCase())
+      .filter((name): name is string => Boolean(name))
+  );
 
   const items: HitListItem[] = [];
 
@@ -23,6 +40,7 @@ export function buildHitList(
     // Skip terminal/closed statuses and blank records
     if (["Closed - Won", "Not a Fit", "Not Interested", ""].includes(account.status)) continue;
     if (!account.account) continue;
+    if (activeNames.has(account.account.trim().toLowerCase())) continue;
 
     const lastActivity = getLatestContactLogForAccount(logs, account);
 

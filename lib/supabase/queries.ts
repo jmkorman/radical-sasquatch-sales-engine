@@ -104,6 +104,7 @@ export async function deleteAccountSnapshot(id: string): Promise<boolean> {
 }
 
 export async function insertActivityLog(entry: {
+  id?: string;
   account_id: string;
   tab: string;
   row_index: number;
@@ -136,6 +137,18 @@ export async function insertActivityLog(entry: {
         await clearOtherFollowUpDates(inserted, inserted.id);
       }
       return inserted;
+    }
+
+    if (entry.id && error.code === "23505") {
+      const { data: existing, error: existingError } = await supabase
+        .from("activity_logs")
+        .select("*")
+        .eq("id", entry.id)
+        .single();
+
+      if (!existingError && existing) {
+        return normalizeActivityLog(existing as Partial<ActivityLog>);
+      }
     }
 
     const missingColumn = getMissingColumn(error);
@@ -208,7 +221,7 @@ export async function getActivityLogs(accountId?: string): Promise<ActivityLog[]
   let query = supabase
     .from("activity_logs")
     .select("*")
-    .eq("is_deleted", false)
+    .not("is_deleted", "eq", true)
     .order("created_at", { ascending: false });
 
   if (accountId) {
@@ -255,7 +268,8 @@ export async function updateActivityLog(
     if (!error) {
       const updated = normalizeActivityLog(data as Partial<ActivityLog>);
       if (updates.follow_up_date && updated.account_id) {
-        await clearOtherFollowUpDates(updated, updated.id);
+        // Don't let cleanup failure block the save — follow_up_date is already written.
+        await clearOtherFollowUpDates(updated, updated.id).catch(() => {});
       }
       return updated;
     }
@@ -295,7 +309,7 @@ export async function getLatestActivityByAccount(): Promise<Record<string, Activ
   const { data, error } = await supabase
     .from("activity_logs")
     .select("*")
-    .eq("is_deleted", false)
+    .not("is_deleted", "eq", true)
     .order("created_at", { ascending: false });
 
   if (error) throw error;
@@ -310,7 +324,7 @@ export async function getLatestActivityByAccount(): Promise<Record<string, Activ
   return map;
 }
 
-export async function getOrders(accountId?: string): Promise<OrderRecord[]> {
+export async function getOrders(accountId?: string, accountName?: string): Promise<OrderRecord[]> {
   const supabase = createServerClient();
   let query = supabase
     .from("orders")
@@ -318,8 +332,15 @@ export async function getOrders(accountId?: string): Promise<OrderRecord[]> {
     .order("order_date", { ascending: false })
     .order("created_at", { ascending: false });
 
-  if (accountId) {
+  // When both accountId and accountName are supplied, match either —
+  // recovers orphan orders whose account_id is stale because the account
+  // was moved between tabs (which rebuilds the stable id).
+  if (accountId && accountName) {
+    query = query.or(`account_id.eq.${accountId},account_name.eq.${accountName}`);
+  } else if (accountId) {
     query = query.eq("account_id", accountId);
+  } else if (accountName) {
+    query = query.eq("account_name", accountName);
   }
 
   const { data, error } = await query;

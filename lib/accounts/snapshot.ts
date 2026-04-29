@@ -98,6 +98,7 @@ export function snapshotToAccount(snapshot: AccountSnapshot): AnyAccount {
     _rowIndex: rowIndex,
     _tab: tab,
     _tabSlug: tabSlug,
+    hitListPinned: Boolean(raw.hitListPinned),
     account: snapshot.account_name || cleanSnapshotValue(raw.account),
     type: snapshot.type ?? cleanSnapshotValue(raw.type),
     status: cleanStatus(snapshot.status ?? raw.status),

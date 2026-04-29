@@ -10,7 +10,7 @@ import { getAllAccounts, getResolvedFollowUpDate, getScheduledFollowUpLogForAcco
 interface FollowUpItem {
   account: AnyAccount;
   reason: string;
-  bucket: "overdue" | "today" | "upcoming";
+  bucket: "overdue" | "today" | "tomorrow" | "upcoming";
   followUpDate: string;
   logId: string | null;
 }
@@ -21,27 +21,47 @@ export function buildFollowUpQueue(
 ): FollowUpItem[] {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+
+  // Active Accounts are customers, not pipeline — their stale pipeline-era
+  // follow-up dates shouldn't surface here. Reorder cadence is tracked
+  // separately. Also suppress any pipeline-tab row whose name already exists
+  // in Active Accounts (mid-migration / never-deleted source row).
+  const activeNames = new Set(
+    data.activeAccounts
+      .map((a) => a.account?.trim().toLowerCase())
+      .filter((name): name is string => Boolean(name))
+  );
 
   return getAllAccounts(data)
     .map((account) => {
+      const tabSlug = account._tabSlug ?? "";
+      if (tabSlug === "active-accounts") return null;
+      if (activeNames.has(account.account?.trim().toLowerCase() ?? "")) return null;
+
       const followUpRaw = getResolvedFollowUpDate(account, logs);
       const followUpDate = followUpRaw ? parseAppDate(followUpRaw) : null;
 
       if (!followUpDate || isNaN(followUpDate.getTime())) return null;
 
-      const bucket =
+      const bucket: FollowUpItem["bucket"] =
         followUpDate.getTime() < today.getTime()
           ? "overdue"
           : followUpDate.getTime() === today.getTime()
             ? "today"
-            : "upcoming";
+            : followUpDate.getTime() === tomorrow.getTime()
+              ? "tomorrow"
+              : "upcoming";
 
       const reason =
         bucket === "overdue"
           ? `Overdue follow-up, last touch ${daysSince(account.contactDate)} days ago`
           : bucket === "today"
             ? "Follow-up scheduled for today"
-            : "Upcoming scheduled follow-up";
+            : bucket === "tomorrow"
+              ? "Follow-up scheduled for tomorrow"
+              : "Upcoming scheduled follow-up";
 
       const followUpLog = getScheduledFollowUpLogForAccount(logs, account);
       return {
@@ -102,10 +122,18 @@ export function FollowUpQueue({
                         ? "bg-rs-punch/15 text-[#ffd6e8] border border-rs-punch/40"
                         : item.bucket === "today"
                           ? "bg-rs-sunset/15 text-rs-sunset border border-rs-sunset/40"
-                          : "bg-rs-gold/15 text-rs-gold border border-rs-gold/40"
+                          : item.bucket === "tomorrow"
+                            ? "bg-rs-cyan/15 text-rs-cyan border border-rs-cyan/40"
+                            : "bg-rs-gold/15 text-rs-gold border border-rs-gold/40"
                     }`}
                   >
-                    {item.bucket === "overdue" ? "Overdue" : item.bucket === "today" ? "Today" : "Upcoming"}
+                    {item.bucket === "overdue"
+                      ? "Overdue"
+                      : item.bucket === "today"
+                        ? "Today"
+                        : item.bucket === "tomorrow"
+                          ? "Tomorrow"
+                          : "Upcoming"}
                   </span>
                 </div>
                 <div className="mt-1 text-sm text-[#d8ccfb]">{item.reason}</div>

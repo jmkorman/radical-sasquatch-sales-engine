@@ -24,6 +24,7 @@ export interface BaseAccount {
   _rowIndex: number;
   _tab: TabName;
   _tabSlug: TabSlug;
+  hitListPinned?: boolean;
   account: string;
   type: string;
   location: string;
@@ -68,6 +69,7 @@ export interface ActiveAccount {
   _rowIndex: number;
   _tab: "Active Accounts";
   _tabSlug: "active-accounts";
+  hitListPinned?: boolean;
   account: string;
   type: string;
   contactName: string;

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { appendGmailMarkers, extractGmailMarkers } from "@/lib/activity/gmailMarkers";
 import { ActivityLog } from "@/types/activity";
 import { AnyAccount, AllTabsData } from "@/types/accounts";
 import { Card } from "@/components/ui/Card";
@@ -122,11 +123,7 @@ export function AllLogsView() {
 
     // Preserve the Gmail thread ID marker so next poll dedup still works.
     // Append it at the END so parseActivityNote hits SUMMARY: format first.
-    let noteToSave = formData.note;
-    const gmailMarker = editingOutreachLog.note?.match(/\[gmail-thread:[^\]]+\]/)?.[0];
-    if (gmailMarker && !noteToSave.includes(gmailMarker)) {
-      noteToSave = noteToSave ? `${noteToSave}\n${gmailMarker}` : gmailMarker;
-    }
+    const noteToSave = appendGmailMarkers(formData.note, extractGmailMarkers(editingOutreachLog.note));
 
     const res = await fetch("/api/activity", {
       method: "PATCH",
@@ -190,7 +187,7 @@ export function AllLogsView() {
     setGmailPolling(true);
     try {
       const res = await fetch("/api/gmail/poll");
-      const result: { imported?: number; importedAccounts?: string[]; skipped?: boolean; reason?: string } = await res.json();
+      const result: { imported?: number; importedLogIds?: string[]; skipped?: boolean; reason?: string } = await res.json();
 
       if (!res.ok || result.skipped) {
         showActionFeedback(result.reason ?? "Gmail not configured.", "error");
@@ -206,9 +203,8 @@ export function AllLogsView() {
       // Fetch fresh logs to find the newly imported ones
       const freshRes = await fetch("/api/activity", { cache: "no-store" });
       const freshLogs: ActivityLog[] = freshRes.ok ? await freshRes.json() : [];
-      const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
       const newGmailLogs = freshLogs.filter(
-        (log) => log.source === "gmail" && new Date(log.created_at).getTime() > fiveMinutesAgo
+        (log) => log.source === "gmail" && (result.importedLogIds ?? []).includes(log.id)
       );
 
       setLogs(freshLogs);

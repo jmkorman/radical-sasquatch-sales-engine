@@ -4,9 +4,7 @@ import Link from "next/link";
 import { ReactNode, useEffect, useMemo, useState } from "react";
 import { useSheetStore } from "@/stores/useSheetStore";
 import { buildFollowUpQueue } from "@/components/features/dashboard/FollowUpQueue";
-import { PipelineSummaryBar } from "@/components/layout/PipelineSummaryBar";
 import { buildHitList, HitListItem } from "@/lib/dashboard/prioritizer";
-import { getStatusCounts } from "@/lib/commission/calculator";
 import { ActivityLog } from "@/types/activity";
 import { AnyAccount } from "@/types/accounts";
 import { Spinner } from "@/components/ui/Spinner";
@@ -146,9 +144,9 @@ export default function DashboardPage() {
     );
   }
 
-  const counts = getStatusCounts(data);
   const followUpQueue = buildFollowUpQueue(data, mergedLogs);
   const dueToday = followUpQueue.filter((item) => item.bucket === "today");
+  const dueTomorrow = followUpQueue.filter((item) => item.bucket === "tomorrow");
   const overdue = followUpQueue.filter((item) => item.bucket === "overdue");
   const upcoming = followUpQueue.filter((item) => item.bucket === "upcoming").slice(0, 5);
 
@@ -246,6 +244,17 @@ export default function DashboardPage() {
       logId: item.logId,
       followUpDate: item.followUpDate,
     })),
+    ...dueTomorrow.map((item) => ({
+      id: `tomorrow_${getAccountPrimaryId(item.account)}`,
+      account: item.account,
+      label: "Tomorrow",
+      detail: item.reason,
+      meta: formatInboxDate(item.followUpDate),
+      color: "#a78bfa",
+      priority: 85,
+      logId: item.logId,
+      followUpDate: item.followUpDate,
+    })),
     ...tastingNoOrder.map((account) => ({
       id: `tasting_${getAccountPrimaryId(account)}`,
       account,
@@ -321,8 +330,6 @@ export default function DashboardPage() {
         <div className="mt-1 text-sm text-[#af9fe6]">{todayLabel}</div>
       </div>
 
-      <PipelineSummaryBar counts={counts} />
-
       <div className="grid gap-4 xl:grid-cols-[1.35fr_1fr]">
         {/* Left column */}
         <div className="space-y-4">
@@ -332,7 +339,7 @@ export default function DashboardPage() {
             title="Action Inbox"
             subtitle="One compact queue for follow-ups, samples, tasting closes, resurfaces, and stale active accounts."
           >
-            <div className="grid gap-3 md:grid-cols-3">
+            <div className="grid gap-3 md:grid-cols-4">
               <MetricCard
                 label="Urgent"
                 value={String(overdue.length)}
@@ -342,6 +349,11 @@ export default function DashboardPage() {
                 label="Due Today"
                 value={String(dueToday.length + tastingNoOrder.length + sampleStalledFeedback.length)}
                 accent="#64f5ea"
+              />
+              <MetricCard
+                label="Tomorrow"
+                value={String(dueTomorrow.length)}
+                accent="#a78bfa"
               />
               <MetricCard
                 label="Watch"

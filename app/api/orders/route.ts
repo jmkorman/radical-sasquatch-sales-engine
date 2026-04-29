@@ -1,47 +1,97 @@
 import { NextRequest, NextResponse } from "next/server";
-import { deleteOrder, getOrders, insertOrder, updateOrder } from "@/lib/supabase/queries";
+import {
+  deleteOrder,
+  getOrders,
+  insertActivityLog,
+  insertOrder,
+  updateOrder,
+} from "@/lib/supabase/queries";
 import { normalizeOrderRecord } from "@/lib/orders/helpers";
 import {
-  appendOrderHistory,
-  appendOrderToSheet,
   ensureActiveAccountForOrder,
   getOrdersFromSheet,
-  updateOrderInSheet,
   withOrderDefaults,
 } from "@/lib/sheets/orders";
 import { OrderRecord } from "@/types/orders";
+
+export const maxDuration = 30;
 
 function supabaseConfigured() {
   return Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
 }
 
+function configError() {
+  return NextResponse.json(
+    { error: "Supabase is not configured. Orders require a database connection." },
+    { status: 503 }
+  );
+}
+
+function buildOrderActivityNote(order: OrderRecord, kind: "created" | "updated"): string {
+  const amount = order.amount ? `$${order.amount.toLocaleString("en-US", { maximumFractionDigits: 0 })}` : "";
+  const name = order.order_name || "Untitled order";
+  const dueParts: string[] = [];
+  if (order.fulfillment_date) dueParts.push(`fulfill ${order.fulfillment_date}`);
+  else if (order.due_date) dueParts.push(`due ${order.due_date}`);
+  const tail = dueParts.length ? ` (${dueParts.join(", ")})` : "";
+  const action = kind === "created" ? "Order logged" : "Order updated";
+  return `${action}: ${name}${amount ? ` — ${amount}` : ""}${tail}`;
+}
+
+async function logOrderActivity(order: OrderRecord, kind: "created" | "updated") {
+  if (!order.account_id || !order.tab) return;
+  try {
+    await insertActivityLog({
+      account_id: order.account_id,
+      tab: order.tab,
+      row_index: order.row_index ?? 0,
+      account_name: order.account_name,
+      action_type: "note",
+      note: buildOrderActivityNote(order, kind),
+      source: "order",
+      activity_kind: "order",
+      counts_as_contact: false,
+    });
+  } catch (error) {
+    console.error("Order activity log error:", error);
+  }
+}
+
 export async function GET(request: NextRequest) {
+  if (!supabaseConfigured()) return configError();
+
   try {
     const accountId = request.nextUrl.searchParams.get("accountId") ?? undefined;
-    const dbOrders = supabaseConfigured()
-      ? await getOrders(accountId).catch((error) => {
-          console.error("Orders database read error:", error);
-          return [] as OrderRecord[];
-        })
-      : [];
+    const accountName = request.nextUrl.searchParams.get("accountName") ?? undefined;
 
-    if (dbOrders.length > 0) {
-      return NextResponse.json(
-        dbOrders.sort(
-          (a, b) =>
-            new Date(b.updated_at || b.created_at || b.order_date).getTime() -
-            new Date(a.updated_at || a.created_at || a.order_date).getTime()
-        )
-      );
+    // Supabase is the source of truth, but we still read legacy sheet-only
+    // orders so historical data created before the cutover is recoverable.
+    // Writes never touch the sheet anymore.
+    const [dbOrders, sheetOrders] = await Promise.all([
+      getOrders(accountId, accountName),
+      getOrdersFromSheet(accountId).catch((error) => {
+        console.error("Orders sheet legacy read error:", error);
+        return [] as OrderRecord[];
+      }),
+    ]);
+
+    const seen = new Set(dbOrders.map((o) => o.id).filter(Boolean));
+    const merged = [...dbOrders];
+    for (const sheetOrder of sheetOrders) {
+      if (!sheetOrder.id || seen.has(sheetOrder.id)) continue;
+      if (
+        accountName &&
+        sheetOrder.account_name !== accountName &&
+        sheetOrder.account_id !== accountId
+      ) {
+        continue;
+      }
+      merged.push(sheetOrder);
+      seen.add(sheetOrder.id);
     }
 
-    const sheetOrders = await getOrdersFromSheet(accountId).catch((error) => {
-      console.error("Orders sheet fallback read error:", error);
-      return [] as OrderRecord[];
-    });
-
     return NextResponse.json(
-      sheetOrders.sort(
+      merged.sort(
         (a, b) =>
           new Date(b.updated_at || b.created_at || b.order_date).getTime() -
           new Date(a.updated_at || a.created_at || a.order_date).getTime()
@@ -54,27 +104,19 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  if (!supabaseConfigured()) return configError();
+
   try {
     const body = await request.json();
     const orderInput = withOrderDefaults({
       ...body,
       amount: Number.isFinite(parseFloat(body.amount)) ? parseFloat(body.amount) : 0,
-      history: appendOrderHistory(null, "Order created", body.owner || "Sales"),
     });
 
-    const dbOrder = supabaseConfigured()
-      ? await insertOrder(orderInput).catch((error) => {
-          console.error("Orders database insert error:", error);
-          return null;
-        })
-      : null;
+    const dbOrder = await insertOrder(orderInput);
+    const created = normalizeOrderRecord({ ...orderInput, ...dbOrder });
 
-    const order = normalizeOrderRecord({ ...orderInput, ...dbOrder });
-    const sheetOrder = await appendOrderToSheet(order).catch((error) => {
-      console.error("Orders sheet secondary append error:", error);
-      return null;
-    });
-    const created = normalizeOrderRecord(dbOrder ? { ...sheetOrder, ...dbOrder } : { ...order, ...sheetOrder });
+    await logOrderActivity(created, "created");
 
     await ensureActiveAccountForOrder(created).catch((error) => {
       console.error("Active account order sync error:", error);
@@ -83,11 +125,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(created, { status: 201 });
   } catch (error) {
     console.error("Orders POST error:", error);
-    return NextResponse.json({ error: "Failed to create order" }, { status: 500 });
+    const message = error instanceof Error ? error.message : "Failed to create order";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 
 export async function PATCH(request: NextRequest) {
+  if (!supabaseConfigured()) return configError();
+
   try {
     const body = await request.json();
     const id = body.id as string | undefined;
@@ -95,57 +140,35 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: "id is required" }, { status: 400 });
     }
 
-    const existingDbOrder = supabaseConfigured()
-      ? (await getOrders().catch(() => [] as OrderRecord[])).find((order) => order.id === id)
-      : null;
-    const existingSheetOrder = existingDbOrder
-      ? null
-      : (await getOrdersFromSheet().catch(() => [] as OrderRecord[])).find((order) => order.id === id);
-    const existingOrder = existingDbOrder ?? existingSheetOrder;
+    const existingOrder = (await getOrders().catch(() => [] as OrderRecord[])).find(
+      (order) => order.id === id
+    );
     const updates = body.updates ?? {};
-    const progressNote = typeof body.progressNote === "string" ? body.progressNote.trim() : "";
-    const actor = typeof body.actor === "string" && body.actor.trim() ? body.actor.trim() : "Production";
-    const statusChanged =
-      updates.status && existingOrder?.status && updates.status !== existingOrder.status;
-
-    const historyMessage =
-      progressNote || (statusChanged ? `Status changed from ${existingOrder?.status} to ${updates.status}` : "");
 
     const nextOrder = normalizeOrderRecord({
       ...existingOrder,
       ...updates,
       id,
       updated_at: new Date().toISOString(),
-      history: historyMessage
-        ? appendOrderHistory(existingOrder?.history, historyMessage, actor)
-        : existingOrder?.history ?? null,
     });
 
     const dbUpdates: Partial<OrderRecord> = { ...nextOrder };
     delete dbUpdates.id;
     delete dbUpdates.created_at;
-    const dbOrder = supabaseConfigured()
-      ? await updateOrder(id, dbUpdates).catch((error) => {
-          console.error("Orders database update error:", error);
-          return null;
-        })
-      : null;
 
-    const updated = normalizeOrderRecord(dbOrder ? { ...nextOrder, ...dbOrder } : nextOrder);
-    await updateOrderInSheet(updated).catch((error) => {
-      console.error("Orders sheet secondary update error:", error);
-    });
+    const dbOrder = await updateOrder(id, dbUpdates);
+    const updated = normalizeOrderRecord({ ...nextOrder, ...dbOrder });
+
     return NextResponse.json(updated);
   } catch (error) {
     console.error("Orders PATCH error:", error);
-    return NextResponse.json({ error: "Failed to update order" }, { status: 500 });
+    const message = error instanceof Error ? error.message : "Failed to update order";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 
 export async function DELETE(request: NextRequest) {
-  if (!supabaseConfigured()) {
-    return NextResponse.json({ error: "Supabase not configured" }, { status: 503 });
-  }
+  if (!supabaseConfigured()) return configError();
 
   try {
     const id = request.nextUrl.searchParams.get("id");

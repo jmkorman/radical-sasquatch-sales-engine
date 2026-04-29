@@ -2,9 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { appendGmailMarkers, extractGmailMarkers } from "@/lib/activity/gmailMarkers";
 import { AnyAccount } from "@/types/accounts";
 import { ActivityLog } from "@/types/activity";
-import { OrderRecord, ORDER_PRIORITIES, ORDER_STATUSES } from "@/types/orders";
+import { OrderRecord } from "@/types/orders";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -14,6 +16,8 @@ import { PitchReminder } from "./PitchReminder";
 import { ActivityLogList } from "./ActivityLog";
 import { QuickActions } from "./QuickActions";
 import { LogOutreachModal } from "@/components/features/dashboard/LogOutreachModal";
+import { OrderModal, OrderFormData } from "@/components/features/orders/OrderModal";
+import { encodeOrderDetails, summarizeLineItems, parseOrderDetails } from "@/lib/orders/lineItems";
 import { todayISO, formatDate, formatDateShort } from "@/lib/utils/dates";
 import { formatActivityNote, parseActivityNote } from "@/lib/activity/notes";
 import { useTrashStore } from "@/stores/useTrashStore";
@@ -29,11 +33,13 @@ import { getLogsForAccount, getScheduledFollowUpLogForAccount } from "@/lib/acti
 import { getAccountPrimaryId } from "@/lib/accounts/identity";
 import { persistActivityEntry } from "@/lib/activity/persist";
 import { getAccountHealth } from "@/lib/accounts/health";
-import { addToHitList, removeFromHitList, isOnHitList } from "@/lib/dashboard/hitList";
+import { clearHitListSuppression, setHitListPinned, suppressHitListAccount } from "@/lib/dashboard/hitList";
 
 interface AccountDetailProps {
   account: AnyAccount;
   logs: ActivityLog[];
+  reviewLogId?: string | null;
+  onReviewLogHandled?: () => void;
 }
 
 interface GmailThread {
@@ -47,16 +53,51 @@ interface GmailThread {
   unread: boolean;
 }
 
-export function AccountDetail({ account, logs }: AccountDetailProps) {
+function toDateInputValue(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function addDays(days: number): string {
+  const date = new Date();
+  date.setHours(0, 0, 0, 0);
+  date.setDate(date.getDate() + days);
+  return toDateInputValue(date);
+}
+
+function nextWeekday(targetDay: number): string {
+  const date = new Date();
+  date.setHours(0, 0, 0, 0);
+  const daysUntilTarget = (targetDay - date.getDay() + 7) % 7 || 7;
+  date.setDate(date.getDate() + daysUntilTarget);
+  return toDateInputValue(date);
+}
+
+export function AccountDetail({ account, logs, reviewLogId = null, onReviewLogHandled }: AccountDetailProps) {
   const deletedLogs = useTrashStore((state) => state.deletedLogs);
   const { fetchAllTabs } = useSheetStore();
   const showActionFeedback = useUIStore((state) => state.showActionFeedback);
   const showActionFeedbackWithAction = useUIStore((state) => state.showActionFeedbackWithAction);
   const accountId = getAccountPrimaryId(account);
 
-  const [onHitList, setOnHitList] = useState(() => isOnHitList(accountId));
+  const router = useRouter();
+  const [onHitList, setOnHitList] = useState(() => account.hitListPinned ?? false);
+  const [savingHitList, setSavingHitList] = useState(false);
   const [showLogModal, setShowLogModal] = useState(false);
+  const [showQuickFollowUp, setShowQuickFollowUp] = useState(false);
+  const [quickFollowUpDate, setQuickFollowUpDate] = useState("");
+  const [savingFollowUp, setSavingFollowUp] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [showOrderModal, setShowOrderModal] = useState(false);
+  const [editingOrder, setEditingOrder] = useState<OrderRecord | null>(null);
+  const [movingToActive, setMovingToActive] = useState(false);
   const [editingOutreachLog, setEditingOutreachLog] = useState<ActivityLog | null>(null);
+  const [handledReviewLogId, setHandledReviewLogId] = useState<string | null>(null);
   const [detailDraft, setDetailDraft] = useState({
     accountName: account.account,
     contactName: "contactName" in account ? account.contactName : "",
@@ -96,22 +137,9 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
   const [updatingFollowUpId, setUpdatingFollowUpId] = useState<string | null>(null);
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [loadingOrders, setLoadingOrders] = useState(true);
-  const [loggingOrder, setLoggingOrder] = useState(false);
   const [gmailThreads, setGmailThreads] = useState<GmailThread[]>([]);
   const [gmailConfigured, setGmailConfigured] = useState<boolean | null>(null);
   const [loadingGmail, setLoadingGmail] = useState(false);
-  const [orderDraft, setOrderDraft] = useState({
-    orderName: "",
-    orderDate: todayISO(),
-    dueDate: "",
-    fulfillmentDate: "",
-    status: "New",
-    priority: "Normal",
-    owner: "",
-    details: "",
-    productionNotes: "",
-    amount: "",
-  });
   const latestGmailThread = gmailThreads[0] ?? null;
   const latestGmailDate = latestGmailThread?.latestMessageDate
     ? new Date(latestGmailThread.latestMessageDate)
@@ -124,7 +152,9 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
   useEffect(() => {
     async function loadOrders() {
       try {
-        const response = await fetch(`/api/orders?accountId=${accountId}`);
+        const response = await fetch(
+          `/api/orders?accountId=${encodeURIComponent(accountId)}&accountName=${encodeURIComponent(account.account)}`
+        );
         if (!response.ok) throw new Error("Failed to load orders");
         const data: OrderRecord[] = await response.json();
         setOrders(data);
@@ -176,6 +206,7 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
 
   useEffect(() => {
     setServerJournalLogs(getLogsForAccount(logs, account));
+    setOnHitList(account.hitListPinned ?? false);
     setActivityOverrides({});
     setSavedDetailDraft({
       accountName: account.account,
@@ -271,6 +302,16 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
     const deletedSet = new Set(deletedLogs.map((e) => e.id));
     return journalEntries.filter((entry) => !deletedSet.has(entry.id));
   }, [deletedLogs, journalEntries]);
+
+  useEffect(() => {
+    if (!reviewLogId || handledReviewLogId === reviewLogId) return;
+    const targetLog = visibleJournalEntries.find((entry) => entry.id === reviewLogId);
+    if (!targetLog) return;
+
+    setEditingOutreachLog(targetLog);
+    setHandledReviewLogId(reviewLogId);
+    onReviewLogHandled?.();
+  }, [handledReviewLogId, onReviewLogHandled, reviewLogId, visibleJournalEntries]);
 
   const lastContactLog = useMemo(
     () => visibleJournalEntries.find((entry) => countsAsContact(entry)) ?? null,
@@ -446,6 +487,8 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
     nextActionType: string;
   }) => {
     if (!editingOutreachLog) return;
+    const gmailMarkers = extractGmailMarkers(editingOutreachLog.note);
+    const noteToSave = appendGmailMarkers(data.note, gmailMarkers);
 
     try {
       const response = await fetch("/api/activity", {
@@ -454,7 +497,7 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
         body: JSON.stringify({
           id: editingOutreachLog.id,
           action_type: data.actionType,
-          note: data.note,
+          note: noteToSave,
           status_before: editingOutreachLog.status_before,
           status_after: data.statusAfter,
           follow_up_date: data.followUpDate || null,
@@ -592,93 +635,196 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
     }
   };
 
-  const handleLogOrder = async () => {
-    if (!orderDraft.orderName.trim()) return;
-    const amount = orderDraft.amount ? parseFloat(orderDraft.amount) : 0;
-
-    setLoggingOrder(true);
+  const handleQuickFollowUp = async () => {
+    if (!quickFollowUpDate) return;
+    const targetLog = visibleJournalEntries.find((e) => e.activity_kind !== "note") ?? visibleJournalEntries[0];
+    setSavingFollowUp(true);
     try {
-      const response = await fetch("/api/orders", {
+      const res = await fetch("/api/activity", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: targetLog?.id ?? null, follow_up_date: quickFollowUpDate }),
+      });
+      if (!targetLog) {
+        // No existing log — create a note entry with only the follow-up date
+        await addJournalEntry({ actionType: "note", note: "Follow-up scheduled", followUpDate: quickFollowUpDate, activityKind: "note", countsAsContact: false });
+      } else {
+        if (!res.ok) throw new Error("Save failed");
+        const updated: ActivityLog = await res.json();
+        setServerJournalLogs((prev) => prev.map((e) => (e.id === updated.id ? updated : e)));
+      }
+      setQuickFollowUpDate("");
+      setShowQuickFollowUp(false);
+      showActionFeedback("Follow-up date set.", "success");
+    } catch {
+      showActionFeedback("Couldn't save follow-up date.", "error");
+    } finally {
+      setSavingFollowUp(false);
+    }
+  };
+
+  const handleMoveToActive = async () => {
+    if (account._tab === "Active Accounts") return;
+    setMovingToActive(true);
+    try {
+      const res = await fetch("/api/accounts/move", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          account_id: accountId,
-          account_name: account.account,
-          tab: account._tabSlug,
-          row_index: account._rowIndex,
-          account_type: account.type,
-          contact_name: account.contactName,
-          phone: account.phone,
-          email: account.email,
-          order_name: orderDraft.orderName,
-          order_date: orderDraft.orderDate,
-          due_date: orderDraft.dueDate || null,
-          fulfillment_date: orderDraft.fulfillmentDate || null,
-          status: orderDraft.status,
-          priority: orderDraft.priority,
-          owner: orderDraft.owner || null,
-          details: orderDraft.details || null,
-          production_notes: orderDraft.productionNotes || null,
-          amount: Number.isFinite(amount) ? amount : 0,
-          notes: orderDraft.productionNotes || null,
+          sourceTab: account._tab,
+          sourceRowIndex: account._rowIndex,
+          targetTab: "Active Accounts",
         }),
       });
-
-      if (response.ok) {
-        const created: OrderRecord = await response.json();
-        setOrders((existing) => [created, ...existing]);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error((body as { error?: string }).error || "Move failed");
       }
+      const result: { newTabSlug: string; newRowIndex: number } = await res.json();
+      showActionFeedback(`${account.account} moved to Active Accounts.`, "success");
+      await fetchAllTabs();
+      router.push(`/accounts/${result.newTabSlug}/${result.newRowIndex}`);
+    } catch (err) {
+      showActionFeedback(
+        err instanceof Error ? err.message : "Couldn't move the account.",
+        "error"
+      );
+      setMovingToActive(false);
+    }
+  };
 
-      if (account._tab === "Active Accounts") {
-        const sheetResponse = await fetch("/api/sheets/update", {
+  const handleDeleteAccount = async () => {
+    if (deleteConfirmText.trim() !== account.account.trim()) {
+      setDeleteError("Account name didn't match. Type it exactly to confirm.");
+      return;
+    }
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      const res = await fetch("/api/sheets/update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tab: account._tab,
+          rowIndex: account._rowIndex,
+          deleteRow: true,
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error((body as { error?: string }).error || "Delete failed");
+      }
+      showActionFeedback(`${account.account} deleted.`, "success");
+      await fetchAllTabs();
+      router.push("/pipeline");
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : "Delete failed");
+      setDeleting(false);
+    }
+  };
+
+  const handleSaveOrder = async (data: OrderFormData) => {
+    const encodedDetails = encodeOrderDetails(data.lineItems, data.freeTextDetails);
+    const amount = Number.isFinite(data.amount) ? data.amount : 0;
+    const isEdit = Boolean(editingOrder);
+
+    const payload = {
+      account_id: accountId,
+      account_name: account.account,
+      tab: account._tabSlug,
+      row_index: account._rowIndex,
+      account_type: account.type,
+      contact_name: account.contactName,
+      phone: account.phone,
+      email: account.email,
+      order_name: data.orderName,
+      order_date: data.orderDate,
+      due_date: data.dueDate || null,
+      fulfillment_date: data.fulfillmentDate || null,
+      status: data.status,
+      priority: data.priority,
+      owner: data.owner || null,
+      details: encodedDetails || null,
+      production_notes: data.productionNotes || null,
+      amount,
+      notes: data.productionNotes || null,
+    };
+
+    const response = isEdit
+      ? await fetch("/api/orders", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: editingOrder!.id, ...payload }),
+        })
+      : await fetch("/api/orders", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            tab: account._tab,
-            rowIndex: account._rowIndex,
-            order: `$${amount.toFixed(0)}`,
-            expectedValues: {
-              order: savedDetailDraft.order || "",
-            },
-          }),
+          body: JSON.stringify(payload),
         });
 
-        if (sheetResponse.status === 409) {
-          await fetchAllTabs();
-          throw new Error("Conflict");
-        }
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error((body as { error?: string }).error || "Save failed");
+    }
 
-        if (!sheetResponse.ok) {
-          throw new Error("Failed to update order");
-        }
+    const saved: OrderRecord = await response.json();
+    setOrders((existing) =>
+      isEdit
+        ? existing.map((o) => (o.id === saved.id ? saved : o))
+        : [saved, ...existing]
+    );
+
+    // Sync the displayed dollar value on Active Accounts rows
+    if (account._tab === "Active Accounts") {
+      await fetch("/api/sheets/update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tab: account._tab,
+          rowIndex: account._rowIndex,
+          order: `$${amount.toFixed(0)}`,
+          expectedValues: { order: savedDetailDraft.order || "" },
+        }),
+      }).catch(() => {});
+      setSavedDetailDraft((prev) => ({ ...prev, order: `$${amount.toFixed(0)}` }));
+      setDetailDraft((prev) => ({ ...prev, order: `$${amount.toFixed(0)}` }));
+    }
+
+    await fetchAllTabs();
+    showActionFeedback(isEdit ? "Order updated." : "Order logged.", "success");
+  };
+
+  const handleToggleHitList = async () => {
+    if (savingHitList) return;
+
+    const nextValue = !onHitList;
+    setSavingHitList(true);
+    setOnHitList(nextValue);
+
+    if (nextValue) {
+      clearHitListSuppression(accountId);
+    } else {
+      suppressHitListAccount(accountId);
+    }
+
+    try {
+      await setHitListPinned(accountId, nextValue);
+      await fetchAllTabs({ silent: true });
+      showActionFeedback(
+        nextValue ? "Added to today's hit list." : "Removed from today's hit list.",
+        "success"
+      );
+    } catch (error) {
+      if (!nextValue) {
+        clearHitListSuppression(accountId);
       }
-
-      setSavedDetailDraft((prev) => ({
-        ...prev,
-        order: `$${amount.toFixed(0)}`,
-      }));
-      setDetailDraft((prev) => ({
-        ...prev,
-        order: `$${amount.toFixed(0)}`,
-      }));
-      setOrderDraft({
-        orderName: "",
-        orderDate: todayISO(),
-        dueDate: "",
-        fulfillmentDate: "",
-        status: "New",
-        priority: "Normal",
-        owner: "",
-        details: "",
-        productionNotes: "",
-        amount: "",
-      });
-      await fetchAllTabs();
-      showActionFeedback("Order logged.", "success");
-    } catch {
-      showActionFeedback("Order saved, but the sheet row changed before the purchase value updated.", "error");
+      setOnHitList(!nextValue);
+      showActionFeedback(
+        error instanceof Error ? error.message : "Couldn't save the hit list change.",
+        "error"
+      );
     } finally {
-      setLoggingOrder(false);
+      setSavingHitList(false);
     }
   };
 
@@ -752,27 +898,82 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
                   <Button onClick={() => setShowLogModal(true)}>Log Outreach</Button>
                   <button
                     type="button"
-                    onClick={() => {
-                      if (onHitList) {
-                        removeFromHitList(accountId);
-                        setOnHitList(false);
-                        showActionFeedback("Removed from today's hit list.", "success");
-                      } else {
-                        addToHitList(accountId);
-                        setOnHitList(true);
-                        showActionFeedback("Added to today's hit list.", "success");
-                      }
-                    }}
+                    onClick={() => { setShowQuickFollowUp((v) => !v); setQuickFollowUpDate(""); }}
+                    className="rounded-lg border border-rs-cyan/40 bg-rs-cyan/10 px-3 py-1.5 text-xs font-semibold text-rs-cyan transition-colors hover:bg-rs-cyan/20"
+                  >
+                    Add Follow-Up
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleToggleHitList()}
+                    disabled={savingHitList}
                     className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${
                       onHitList
                         ? "border-rs-gold/50 bg-rs-gold/15 text-rs-gold hover:bg-rs-gold/25"
                         : "border-rs-border/60 bg-white/5 text-[#af9fe6] hover:border-rs-gold/40 hover:text-rs-gold"
                     }`}
                   >
-                    {onHitList ? "On Hit List" : "Hit List"}
+                    {savingHitList ? "Saving..." : onHitList ? "On Hit List" : "Hit List"}
                   </button>
+                  {account._tab !== "Active Accounts" && (
+                    <button
+                      type="button"
+                      onClick={() => void handleMoveToActive()}
+                      disabled={movingToActive}
+                      className="rounded-lg border border-rs-gold/50 bg-rs-gold/10 px-3 py-1.5 text-xs font-semibold text-rs-gold transition-colors hover:bg-rs-gold/20 disabled:opacity-50"
+                    >
+                      {movingToActive ? "Moving..." : "→ Active Accounts"}
+                    </button>
+                  )}
                 </div>
               </div>
+
+              {showQuickFollowUp && (
+                <div className="flex flex-wrap items-center gap-2 rounded-xl border border-rs-cyan/30 bg-rs-cyan/5 px-3 py-2.5">
+                  <span className="text-xs font-semibold text-rs-cyan">Follow-up date:</span>
+                  {[
+                    { label: "Tomorrow", value: addDays(1) },
+                    { label: "2 Days", value: addDays(2) },
+                    { label: "Next Week", value: nextWeekday(1) },
+                  ].map(({ label, value }) => {
+                    return (
+                      <button
+                        key={label}
+                        type="button"
+                        onClick={() => setQuickFollowUpDate(value)}
+                        className={`rounded-lg border px-2.5 py-1 text-[11px] font-semibold transition-colors ${
+                          quickFollowUpDate === value
+                            ? "border-rs-cyan bg-rs-cyan/20 text-rs-cyan"
+                            : "border-rs-border/50 bg-white/5 text-[#af9fe6] hover:border-rs-cyan/40"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                  <input
+                    type="date"
+                    value={quickFollowUpDate}
+                    onChange={(e) => setQuickFollowUpDate(e.target.value)}
+                    className="rounded-lg border border-rs-border/50 bg-black/20 px-2 py-1 text-xs text-rs-cream outline-none focus:border-rs-cyan/60"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void handleQuickFollowUp()}
+                    disabled={!quickFollowUpDate || savingFollowUp}
+                    className="rounded-lg border border-rs-cyan/40 bg-rs-cyan/15 px-3 py-1 text-xs font-semibold text-rs-cyan transition-colors hover:bg-rs-cyan/25 disabled:opacity-40"
+                  >
+                    {savingFollowUp ? "Saving…" : "Set"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowQuickFollowUp(false)}
+                    className="text-xs text-white/35 hover:text-white/60"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
 
               <div className="grid gap-3 md:grid-cols-2">
                 <Input
@@ -1035,82 +1236,20 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
 
           <Card>
             <div className="space-y-3">
-              <div>
-                <div className="text-[11px] uppercase tracking-[0.3em] text-[#af9fe6]">Order Log</div>
-                <div className="mt-1 text-sm text-[#d8ccfb]">
-                  Create production-tracked orders here. New orders roll into the Orders board and Active Accounts.
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-[11px] uppercase tracking-[0.3em] text-[#af9fe6]">Order Log</div>
+                  <div className="mt-1 text-sm text-[#d8ccfb]">
+                    Track production orders with line items, dates, and pricing. Click an order to edit.
+                  </div>
                 </div>
-              </div>
-
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                <Input
-                  label="Order Name"
-                  value={orderDraft.orderName}
-                  onChange={(e) => setOrderDraft((prev) => ({ ...prev, orderName: e.target.value }))}
-                  placeholder="Patio restock, event order, opening order"
-                />
-                <Input
-                  label="Order Date"
-                  type="date"
-                  value={orderDraft.orderDate}
-                  onChange={(e) => setOrderDraft((prev) => ({ ...prev, orderDate: e.target.value }))}
-                />
-                <Input
-                  label="Due Date"
-                  type="date"
-                  value={orderDraft.dueDate}
-                  onChange={(e) => setOrderDraft((prev) => ({ ...prev, dueDate: e.target.value }))}
-                />
-                <Input
-                  label="Delivery/Pickup"
-                  type="date"
-                  value={orderDraft.fulfillmentDate}
-                  onChange={(e) => setOrderDraft((prev) => ({ ...prev, fulfillmentDate: e.target.value }))}
-                />
-                <Select
-                  label="Status"
-                  value={orderDraft.status}
-                  onChange={(e) => setOrderDraft((prev) => ({ ...prev, status: e.target.value }))}
-                  options={ORDER_STATUSES.map((status) => ({ value: status, label: status }))}
-                />
-                <Select
-                  label="Priority"
-                  value={orderDraft.priority}
-                  onChange={(e) => setOrderDraft((prev) => ({ ...prev, priority: e.target.value }))}
-                  options={ORDER_PRIORITIES.map((priority) => ({ value: priority, label: priority }))}
-                />
-                <Input
-                  label="Owner"
-                  value={orderDraft.owner}
-                  onChange={(e) => setOrderDraft((prev) => ({ ...prev, owner: e.target.value }))}
-                  placeholder="Production lead"
-                />
-                <Input
-                  label="Optional Amount"
-                  inputMode="decimal"
-                  value={orderDraft.amount}
-                  onChange={(e) => setOrderDraft((prev) => ({ ...prev, amount: e.target.value }))}
-                  placeholder="Not required"
-                />
-                <Textarea
-                  label="Order Details"
-                  className="xl:col-span-2"
-                  value={orderDraft.details}
-                  onChange={(e) => setOrderDraft((prev) => ({ ...prev, details: e.target.value }))}
-                  placeholder="Items, counts, packaging, delivery requirements"
-                />
-                <Textarea
-                  label="Production Notes"
-                  className="xl:col-span-2"
-                  value={orderDraft.productionNotes}
-                  onChange={(e) => setOrderDraft((prev) => ({ ...prev, productionNotes: e.target.value }))}
-                  placeholder="Prep constraints, handoff notes, anything production should know"
-                />
-              </div>
-
-              <div className="flex justify-end">
-                <Button onClick={handleLogOrder} disabled={loggingOrder || !orderDraft.orderName.trim()}>
-                  {loggingOrder ? "Creating..." : "Create Order"}
+                <Button
+                  onClick={() => {
+                    setEditingOrder(null);
+                    setShowOrderModal(true);
+                  }}
+                >
+                  + Log Order
                 </Button>
               </div>
 
@@ -1122,37 +1261,65 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {orders.map((order) => (
-                    <div
-                      key={order.id}
-                      className="rounded-xl border border-rs-border/60 bg-black/10 px-3 py-3 text-sm"
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="font-semibold text-rs-cream">{order.order_name || "Untitled order"}</div>
-                        <div className="text-xs text-[#af9fe6]">{formatDate(order.order_date)}</div>
-                      </div>
-                      <div className="mt-2 flex flex-wrap gap-2 text-xs">
-                        <span className="rounded-full border border-rs-border/60 px-2 py-0.5 text-[#d8ccfb]">
-                          {order.status}
-                        </span>
-                        {order.due_date && (
-                          <span className="rounded-full border border-rs-border/60 px-2 py-0.5 text-[#d8ccfb]">
-                            Due {formatDate(order.due_date)}
-                          </span>
-                        )}
-                        {order.priority && (
-                          <span className="rounded-full border border-rs-border/60 px-2 py-0.5 text-[#d8ccfb]">
-                            {order.priority}
-                          </span>
-                        )}
-                      </div>
-                      {(order.details || order.production_notes || order.notes) && (
-                        <div className="mt-2 text-[#d8ccfb]">
-                          {order.details || order.production_notes || order.notes}
+                  {orders.map((order) => {
+                    const parsedDetails = parseOrderDetails(order.details);
+                    const itemSummary = parsedDetails.lineItems.length
+                      ? summarizeLineItems(parsedDetails.lineItems)
+                      : "";
+                    const amountLabel =
+                      typeof order.amount === "number" && order.amount > 0
+                        ? `$${order.amount.toLocaleString("en-US", { maximumFractionDigits: 0 })}`
+                        : null;
+                    return (
+                      <button
+                        type="button"
+                        key={order.id}
+                        onClick={() => {
+                          setEditingOrder(order);
+                          setShowOrderModal(true);
+                        }}
+                        className="w-full rounded-xl border border-rs-border/60 bg-black/10 px-3 py-3 text-left text-sm transition-colors hover:border-rs-gold/50 hover:bg-white/5"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="font-semibold text-rs-cream">
+                            {order.order_name || "Untitled order"}
+                          </div>
+                          <div className="flex items-center gap-3 text-xs">
+                            {amountLabel && (
+                              <span className="font-bold text-rs-gold">{amountLabel}</span>
+                            )}
+                            <span className="text-[#af9fe6]">{formatDate(order.order_date)}</span>
+                          </div>
                         </div>
-                      )}
-                    </div>
-                  ))}
+                        <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                          <span className="rounded-full border border-rs-border/60 px-2 py-0.5 text-[#d8ccfb]">
+                            {order.status}
+                          </span>
+                          {order.due_date && (
+                            <span className="rounded-full border border-rs-border/60 px-2 py-0.5 text-[#d8ccfb]">
+                              Due {formatDate(order.due_date)}
+                            </span>
+                          )}
+                          {order.fulfillment_date && (
+                            <span className="rounded-full border border-rs-border/60 px-2 py-0.5 text-[#d8ccfb]">
+                              Deliver {formatDate(order.fulfillment_date)}
+                            </span>
+                          )}
+                          {order.priority && order.priority !== "Normal" && (
+                            <span className="rounded-full border border-rs-punch/40 bg-rs-punch/10 px-2 py-0.5 text-[#ffd6e8]">
+                              {order.priority}
+                            </span>
+                          )}
+                        </div>
+                        {itemSummary && (
+                          <div className="mt-2 text-xs text-[#d8ccfb]">{itemSummary}</div>
+                        )}
+                        {parsedDetails.freeText && (
+                          <div className="mt-1 text-xs text-[#af9fe6]">{parsedDetails.freeText}</div>
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -1233,6 +1400,95 @@ export function AccountDetail({ account, logs }: AccountDetailProps) {
           onSubmit={handleUpdateOutreachLog}
         />
       )}
+
+      {showOrderModal && (
+        <OrderModal
+          accountName={account.account}
+          initialOrder={editingOrder}
+          onClose={() => {
+            setShowOrderModal(false);
+            setEditingOrder(null);
+          }}
+          onSubmit={handleSaveOrder}
+          onDelete={async (orderId) => {
+            const res = await fetch(`/api/orders?id=${encodeURIComponent(orderId)}`, {
+              method: "DELETE",
+            });
+            if (!res.ok) throw new Error("Delete failed");
+            setOrders((existing) => existing.filter((o) => o.id !== orderId));
+          }}
+        />
+      )}
+
+      {/* Danger zone */}
+      <Card className="border-rs-punch/30">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <h3 className="text-sm font-semibold uppercase tracking-[0.2em] text-rs-punch">
+              Danger Zone
+            </h3>
+            <p className="mt-1 text-xs text-[#af9fe6]">
+              Removes this account from the pipeline sheet and Supabase. Activity logs and orders are preserved
+              (so historical data survives), but the account row itself is gone.
+            </p>
+          </div>
+          {!showDeleteConfirm && (
+            <button
+              type="button"
+              onClick={() => {
+                setShowDeleteConfirm(true);
+                setDeleteConfirmText("");
+                setDeleteError(null);
+              }}
+              className="shrink-0 rounded-lg border border-rs-punch/50 bg-rs-punch/10 px-3 py-1.5 text-xs font-semibold text-[#ffd6e8] transition-colors hover:bg-rs-punch/20"
+            >
+              Delete Account
+            </button>
+          )}
+        </div>
+
+        {showDeleteConfirm && (
+          <div className="mt-3 space-y-2 rounded-xl border border-rs-punch/40 bg-rs-punch/5 p-3">
+            <p className="text-xs text-[#ffd6e8]">
+              Type <span className="font-mono font-bold">{account.account}</span> to confirm deletion.
+            </p>
+            <Input
+              value={deleteConfirmText}
+              onChange={(e) => {
+                setDeleteConfirmText(e.target.value);
+                setDeleteError(null);
+              }}
+              placeholder={account.account}
+              autoFocus
+            />
+            {deleteError && (
+              <p className="text-xs text-[#ffd6e8]">{deleteError}</p>
+            )}
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => void handleDeleteAccount()}
+                disabled={deleting || deleteConfirmText.trim() !== account.account.trim()}
+                className="rounded-lg border border-rs-punch/60 bg-rs-punch/20 px-3 py-1.5 text-xs font-semibold text-[#ffd6e8] transition-colors hover:bg-rs-punch/30 disabled:opacity-40"
+              >
+                {deleting ? "Deleting…" : "Confirm Delete"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowDeleteConfirm(false);
+                  setDeleteConfirmText("");
+                  setDeleteError(null);
+                }}
+                disabled={deleting}
+                className="rounded-lg border border-rs-border/60 bg-white/5 px-3 py-1.5 text-xs font-semibold text-[#af9fe6] transition-colors hover:border-rs-cream hover:text-rs-cream"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+      </Card>
     </div>
   );
 }

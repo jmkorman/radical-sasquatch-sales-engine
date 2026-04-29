@@ -13,7 +13,7 @@ import { persistActivityEntry } from "@/lib/activity/persist";
 import { todayISO } from "@/lib/utils/dates";
 import { STATUS_VALUES, TAB_NAME_TO_SLUG } from "@/lib/utils/constants";
 import { normalizeAccountName, buildStableAccountId } from "@/lib/accounts/identity";
-import { addToHitList } from "@/lib/dashboard/hitList";
+import { setHitListPinned } from "@/lib/dashboard/hitList";
 
 type AddAccountForm = {
   tab: TabName;
@@ -134,7 +134,7 @@ export function QuickLogButton() {
 
       const created: { tab?: TabName; rowIndex?: number | null; href?: string } = await res.json();
       if (addToHitListChecked) {
-        addToHitList(buildStableAccountId(addForm.tab, addForm.account));
+        await setHitListPinned(buildStableAccountId(addForm.tab, addForm.account), true);
       }
       await fetchAllTabs();
       setAddAccountMessage({ tone: "success", text: "Account added. Opening it now..." });

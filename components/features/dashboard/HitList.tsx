@@ -11,7 +11,7 @@ import { useUIStore } from "@/stores/useUIStore";
 import { persistActivityEntry } from "@/lib/activity/persist";
 import { getAllAccounts } from "@/lib/activity/timeline";
 import { getAccountPrimaryId } from "@/lib/accounts/identity";
-import { loadHitListSets, addToHitList, removeFromHitList } from "@/lib/dashboard/hitList";
+import { clearHitListSuppression, loadHitListSets, setHitListPinned, suppressHitListAccount } from "@/lib/dashboard/hitList";
 
 type DisplayHitListItem = {
   account: AnyAccount;
@@ -21,48 +21,39 @@ type DisplayHitListItem = {
   manual?: boolean;
 };
 
-export function HitList({ items }: { items: HitListItem[] }) {
+// items prop retained for API compatibility; accounts are now manually curated only
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export function HitList({ items: _items }: { items: HitListItem[] }) {
   const [modalAccount, setModalAccount] = useState<AnyAccount | null>(null);
   const [query, setQuery] = useState("");
   const [removedIds, setRemovedIds] = useState<Set<string>>(() => loadHitListSets().removedIds);
-  const [manualIds, setManualIds] = useState<Set<string>>(() => loadHitListSets().manualIds);
+  const [savingHitListId, setSavingHitListId] = useState<string | null>(null);
   const { data, fetchAllTabs } = useSheetStore();
   const showActionFeedback = useUIStore((state) => state.showActionFeedback);
 
   const allAccounts = useMemo(() => (data ? getAllAccounts(data) : []), [data]);
 
+  // Only show manually added accounts — no algorithm auto-suggestions
   const visibleItems = useMemo<DisplayHitListItem[]>(() => {
-    const base = items
-      .filter((item) => !removedIds.has(getAccountPrimaryId(item.account)))
-      .map((item) => ({
-        account: item.account,
-        reason: item.reason,
-        daysSinceLastTouch: item.daysSinceLastTouch,
-        lastActivityDate: item.lastActivity?.created_at ?? null,
-      }));
-
-    const visibleIds = new Set(base.map((item) => getAccountPrimaryId(item.account)));
-    const manual = allAccounts
-      .filter((account) => manualIds.has(getAccountPrimaryId(account)))
-      .filter((account) => !visibleIds.has(getAccountPrimaryId(account)))
+    return allAccounts
+      .filter((account) => account.hitListPinned)
+      .filter((account) => !removedIds.has(getAccountPrimaryId(account)))
       .map((account) => ({
         account,
-        reason: "Manually added to today's hit list",
+        reason: "On hit list",
         daysSinceLastTouch: daysSince(account.contactDate),
         lastActivityDate: null,
         manual: true,
       }));
-
-    return [...base, ...manual];
-  }, [allAccounts, items, manualIds, removedIds]);
+  }, [allAccounts, removedIds]);
 
   const searchResults = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return [];
 
-    const visibleIds = new Set(visibleItems.map((item) => getAccountPrimaryId(item.account)));
+    const alreadyOnList = new Set(visibleItems.map((item) => getAccountPrimaryId(item.account)));
     return allAccounts
-      .filter((account) => !visibleIds.has(getAccountPrimaryId(account)))
+      .filter((account) => !account.hitListPinned && !alreadyOnList.has(getAccountPrimaryId(account)))
       .filter((account) =>
         [
           account.account,
@@ -77,27 +68,62 @@ export function HitList({ items }: { items: HitListItem[] }) {
       .slice(0, 6);
   }, [allAccounts, query, visibleItems]);
 
-  const addAccount = (account: AnyAccount) => {
+  const addAccount = async (account: AnyAccount) => {
     const id = getAccountPrimaryId(account);
-    addToHitList(id);
-    setManualIds((prev) => new Set(prev).add(id));
+    setSavingHitListId(id);
+    // Snapshot previous suppression state so we can restore it if the save fails
+    const wasSuppressed = removedIds.has(id);
+    clearHitListSuppression(id);
     setRemovedIds((prev) => {
       const next = new Set(prev);
       next.delete(id);
       return next;
     });
-    setQuery("");
+
+    try {
+      await setHitListPinned(id, true);
+      await fetchAllTabs({ silent: true });
+      setQuery("");
+      showActionFeedback(`${account.account} added to the hit list.`, "success");
+    } catch (error) {
+      // Roll back local state so the UI matches reality
+      if (wasSuppressed) {
+        suppressHitListAccount(id);
+        setRemovedIds((prev) => new Set(prev).add(id));
+      }
+      showActionFeedback(
+        error instanceof Error ? error.message : "Couldn't save the hit list change.",
+        "error"
+      );
+    } finally {
+      setSavingHitListId(null);
+    }
   };
 
-  const removeAccount = (account: AnyAccount) => {
+  const removeAccount = async (account: AnyAccount) => {
     const id = getAccountPrimaryId(account);
-    removeFromHitList(id);
+    setSavingHitListId(id);
+    suppressHitListAccount(id);
     setRemovedIds((prev) => new Set(prev).add(id));
-    setManualIds((prev) => {
-      const next = new Set(prev);
-      next.delete(id);
-      return next;
-    });
+
+    try {
+      await setHitListPinned(id, false);
+      await fetchAllTabs({ silent: true });
+      showActionFeedback(`${account.account} removed from the hit list.`, "success");
+    } catch (error) {
+      clearHitListSuppression(id);
+      setRemovedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+      showActionFeedback(
+        error instanceof Error ? error.message : "Couldn't save the hit list change.",
+        "error"
+      );
+    } finally {
+      setSavingHitListId(null);
+    }
   };
 
   const handleSubmitOutreach = async (data: {
@@ -175,7 +201,8 @@ export function HitList({ items }: { items: HitListItem[] }) {
                 <button
                   key={`${account._tabSlug}_${account._rowIndex}_add`}
                   type="button"
-                  onClick={() => addAccount(account)}
+                  onClick={() => void addAccount(account)}
+                  disabled={savingHitListId === getAccountPrimaryId(account)}
                   className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm transition-colors hover:bg-white/10"
                 >
                   <span className="min-w-0">
@@ -185,7 +212,7 @@ export function HitList({ items }: { items: HitListItem[] }) {
                     </span>
                   </span>
                   <span className="shrink-0 rounded-lg border border-rs-cyan/40 px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-rs-cyan">
-                    Add
+                    {savingHitListId === getAccountPrimaryId(account) ? "Saving" : "Add"}
                   </span>
                 </button>
               ))}
@@ -234,10 +261,11 @@ export function HitList({ items }: { items: HitListItem[] }) {
                     </button>
                     <button
                       type="button"
-                      onClick={() => removeAccount(item.account)}
+                      disabled={savingHitListId === getAccountPrimaryId(item.account)}
+                      onClick={() => void removeAccount(item.account)}
                       className="rounded-lg border border-rs-border/60 bg-white/5 px-2.5 py-1 text-[11px] font-semibold text-[#af9fe6] transition-colors hover:border-rs-punch/40 hover:text-rs-punch"
                     >
-                      Remove
+                      {savingHitListId === getAccountPrimaryId(item.account) ? "Saving..." : "Remove"}
                     </button>
                   </div>
                 </div>

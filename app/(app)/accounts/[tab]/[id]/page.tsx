@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useSheetStore } from "@/stores/useSheetStore";
 import { AccountDetail } from "@/components/features/accounts/AccountDetail";
 import { AnyAccount } from "@/types/accounts";
@@ -11,12 +11,16 @@ import Link from "next/link";
 
 export default function AccountPage() {
   const params = useParams();
+  const pathname = usePathname();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const { data } = useSheetStore();
   const [logs, setLogs] = useState<ActivityLog[]>([]);
   const [loading, setLoading] = useState(true);
 
   const tab = params.tab as string;
   const id = parseInt(params.id as string, 10);
+  const reviewLogId = searchParams.get("reviewLog");
 
   useEffect(() => {
     async function loadLogs() {
@@ -70,7 +74,12 @@ export default function AccountPage() {
           <Spinner />
         </div>
       ) : (
-        <AccountDetail account={account} logs={logs} />
+        <AccountDetail
+          account={account}
+          logs={logs}
+          reviewLogId={reviewLogId}
+          onReviewLogHandled={() => router.replace(pathname)}
+        />
       )}
     </div>
   );

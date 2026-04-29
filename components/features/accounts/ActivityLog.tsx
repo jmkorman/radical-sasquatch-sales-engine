@@ -46,6 +46,7 @@ export function ActivityLogList({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [editingFollowUpId, setEditingFollowUpId] = useState<string | null>(null);
   const [editingFollowUpDate, setEditingFollowUpDate] = useState<string>("");
+  const [savingFollowUpId, setSavingFollowUpId] = useState<string | null>(null);
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [editingNoteContent, setEditingNoteContent] = useState<string>("");
   const deletedIds = new Set(deletedLogs.map((entry) => entry.id));
@@ -173,22 +174,27 @@ export function ActivityLogList({
                       <input
                         type="date"
                         value={editingFollowUpDate}
-                        onChange={(e) => setEditingFollowUpDate(e.target.value)}
-                        className="rounded border border-rs-punch/50 bg-rs-bg/50 px-2 py-1 text-xs text-white"
-                      />
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="px-2 py-1 text-xs"
-                        onClick={async () => {
-                          if (onEditFollowUp && editingFollowUpDate) {
-                            await onEditFollowUp(log, editingFollowUpDate);
+                        onChange={async (e) => {
+                          const nextDate = e.target.value;
+                          setEditingFollowUpDate(nextDate);
+                          if (!onEditFollowUp || !nextDate) return;
+
+                          setSavingFollowUpId(log.id);
+                          try {
+                            await onEditFollowUp(log, nextDate);
                             setEditingFollowUpId(null);
+                            showActionFeedback("Follow-up date saved.", "success");
+                          } catch {
+                            showActionFeedback("Couldn't update follow-up date.", "error");
+                          } finally {
+                            setSavingFollowUpId(null);
                           }
                         }}
-                      >
-                        Save
-                      </Button>
+                        className="rounded border border-rs-punch/50 bg-rs-bg/50 px-2 py-1 text-xs text-white"
+                      />
+                      <span className="text-[11px] text-[#af9fe6]">
+                        {savingFollowUpId === log.id ? "Saving..." : "Auto-saves"}
+                      </span>
                       <Button
                         size="sm"
                         variant="ghost"

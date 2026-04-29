@@ -5,6 +5,8 @@ import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { useSheetStore } from "@/stores/useSheetStore";
 import { CHANNEL_URGENCY_THRESHOLDS } from "@/lib/utils/constants";
+import { ErrorLogViewer } from "@/components/features/settings/ErrorLogViewer";
+import { GmailLogCleanup } from "@/components/features/settings/GmailLogCleanup";
 
 type EnvStatus = {
   googleSheets: boolean;
@@ -68,6 +70,12 @@ export default function SettingsPage() {
         <h2 className="text-2xl font-black uppercase tracking-[0.1em] text-rs-gold">Settings</h2>
         <p className="text-sm text-[#d8ccfb] mt-1">Configuration, integrations, and urgency thresholds.</p>
       </div>
+
+      {/* Error Log */}
+      <ErrorLogViewer />
+
+      {/* Gmail log cleanup */}
+      <GmailLogCleanup />
 
       {/* Data Sync */}
       <Card>

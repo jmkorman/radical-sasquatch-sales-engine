@@ -1,4 +1,5 @@
 import { OutreachEntry } from "@/stores/useOutreachStore";
+import { extractGmailMarkers } from "@/lib/activity/gmailMarkers";
 import { ActionType, ActivityLog } from "@/types/activity";
 
 function normalizeActivitySegment(value: string | null | undefined): string {
@@ -6,6 +7,17 @@ function normalizeActivitySegment(value: string | null | undefined): string {
 }
 
 function getActivityFingerprint(log: ActivityLog): string {
+  const { messageId, threadId } = extractGmailMarkers(log.note);
+  if (messageId || threadId) {
+    return [
+      "gmail",
+      normalizeActivitySegment(log.account_id),
+      normalizeActivitySegment(messageId),
+      normalizeActivitySegment(threadId),
+      normalizeActivitySegment(log.action_type),
+    ].join("|");
+  }
+
   const minuteBucket = Math.floor(new Date(log.created_at).getTime() / 60000);
 
   return [
