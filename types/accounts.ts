@@ -9,6 +9,7 @@ export type StatusValue =
   | "Sample Sent"
   | "Tasting Complete"
   | "Decision Pending"
+  | "Active Account"
   | "Backburner"
   | "Not a Fit"
   // Legacy stages (kept for backward compat with existing sheet data)

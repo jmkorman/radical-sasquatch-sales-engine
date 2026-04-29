@@ -367,6 +367,12 @@ export async function insertOrder(entry: Partial<OrderRecord> & {
 
     if (!error) return normalizeOrderRecord(data as Partial<OrderRecord>);
 
+    if (isMissingRelation(error)) {
+      throw new Error(
+        "Supabase 'orders' table is missing. Run supabase/orders.sql against your database to create it."
+      );
+    }
+
     const missingColumn = getMissingColumn(error);
     if (missingColumn && missingColumn in payload) {
       const nextPayload = { ...payload };
@@ -401,6 +407,12 @@ export async function updateOrder(
       .single();
 
     if (!error) return normalizeOrderRecord(data as Partial<OrderRecord>);
+
+    if (isMissingRelation(error)) {
+      throw new Error(
+        "Supabase 'orders' table is missing. Run supabase/orders.sql against your database to create it."
+      );
+    }
 
     const missingColumn = getMissingColumn(error);
     if (missingColumn && missingColumn in payload) {

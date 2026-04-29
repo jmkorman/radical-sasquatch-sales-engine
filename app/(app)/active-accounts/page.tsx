@@ -38,6 +38,7 @@ const STATUS_ACCENT: Record<string, string> = {
   "Sample Sent":       "#64f5ea",
   "Tasting Complete":  "#a78bfa",
   "Decision Pending":  "#f97316",
+  "Active Account":    "#44d39f",
   Backburner:          "#6b7280",
   "Not a Fit":         "#7f1d1d",
   // Legacy
@@ -325,8 +326,10 @@ function ActiveAccountsPageContent() {
       body: JSON.stringify(payload),
     });
     if (!response.ok) {
-      showActionFeedback("Couldn't log order.", "error");
-      throw new Error("Save failed");
+      const body = await response.json().catch(() => ({}));
+      const message = (body as { error?: string }).error || "Save failed";
+      showActionFeedback(`Couldn't log order: ${message}`, "error");
+      throw new Error(message);
     }
     setOrderTarget(null);
     await Promise.all([refreshOrders(), fetchAllTabs()]);
@@ -428,8 +431,10 @@ function ActiveAccountsPageContent() {
         return dateToTimestamp(aDate) - dateToTimestamp(bDate);
       }
       if (sortBy === "order") {
-        const aValue = parseFloat(("order" in a ? a.order : "").replace(/[^0-9.]/g, "")) || 0;
-        const bValue = parseFloat(("order" in b ? b.order : "").replace(/[^0-9.]/g, "")) || 0;
+        // Sort by real Order records (lifetime total), not the legacy
+        // sheet "order" column which often holds freeform notes.
+        const aValue = getOrderStats(ordersByAccount[idA] ?? []).total;
+        const bValue = getOrderStats(ordersByAccount[idB] ?? []).total;
         return bValue - aValue;
       }
       if (sortBy === "followup") {
@@ -643,10 +648,11 @@ function ActiveAccountsPageContent() {
                 const displayLastContact = latestContact?.created_at || account.contactDate;
                 const since = daysSince(displayLastContact);
                 const accent = getStatusAccent(account.status);
-                const sheetOrderRaw = ("order" in account ? account.order : "") || "";
-                const lastOrderAmount =
-                  stats.latest?.amount ??
-                  (parseFloat(sheetOrderRaw.replace(/[^0-9.]/g, "")) || 0);
+                // Only show real Order records — ignore the legacy
+                // Active Accounts sheet "order" column to avoid ghost
+                // amounts that don't appear on the Orders page.
+                const lastOrderAmount = stats.latest?.amount ?? 0;
+                const hasOrders = stats.count > 0;
 
                 return (
                   <div
@@ -718,10 +724,12 @@ function ActiveAccountsPageContent() {
                     {/* Orders summary */}
                     <div className="hidden shrink-0 text-right lg:block">
                       <div className="text-[10px] uppercase tracking-wider text-[#8c7fbd]">
-                        {stats.count > 0 ? `${stats.count} order${stats.count === 1 ? "" : "s"}` : "Last order"}
+                        {hasOrders ? `${stats.count} order${stats.count === 1 ? "" : "s"}` : "Last order"}
                       </div>
-                      <div className="text-xl font-black tracking-tight text-rs-gold">
-                        ${lastOrderAmount.toLocaleString("en-US", { maximumFractionDigits: 0 })}
+                      <div className={`text-xl font-black tracking-tight ${hasOrders ? "text-rs-gold" : "text-[#5d518f]"}`}>
+                        {hasOrders
+                          ? `$${lastOrderAmount.toLocaleString("en-US", { maximumFractionDigits: 0 })}`
+                          : "—"}
                       </div>
                       {stats.count > 1 && (
                         <div className="text-[10px] text-[#8c7fbd]">

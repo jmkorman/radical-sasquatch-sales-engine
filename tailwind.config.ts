@@ -14,6 +14,7 @@ const config: Config = {
     "bg-status-sample",
     "bg-status-tasting",
     "bg-status-decision",
+    "bg-status-active",
     // Legacy
     "bg-status-researched",
     "bg-status-contacted",
@@ -40,6 +41,7 @@ const config: Config = {
         "status-sample":     "#64f5ea",
         "status-tasting":    "#a78bfa",
         "status-decision":   "#f97316",
+        "status-active":     "#44d39f",
         // Legacy stages
         "status-researched": "#4d8cff",
         "status-contacted":  "#ffb321",

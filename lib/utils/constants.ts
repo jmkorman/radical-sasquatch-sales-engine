@@ -8,6 +8,7 @@ export const STATUS_VALUES: StatusValue[] = [
   "Sample Sent",
   "Tasting Complete",
   "Decision Pending",
+  "Active Account",
   "Backburner",
   "Not a Fit",
 ];
@@ -54,6 +55,7 @@ export const STATUS_COLORS: Record<string, string> = {
   "Sample Sent":       "bg-status-sample",
   "Tasting Complete":  "bg-status-tasting",
   "Decision Pending":  "bg-status-decision",
+  "Active Account":    "bg-status-active",
   Backburner:          "bg-gray-600",
   "Not a Fit":         "bg-red-900",
   // Legacy

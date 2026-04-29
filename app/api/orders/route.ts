@@ -27,6 +27,19 @@ function configError() {
   );
 }
 
+// Supabase errors are plain objects, not Error instances. Extract a useful
+// message from either shape so the client doesn't see a generic fallback.
+function describeError(error: unknown): string {
+  if (!error) return "Unknown error";
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === "object") {
+    const e = error as { message?: string; details?: string; hint?: string; code?: string };
+    const parts = [e.message, e.details, e.hint, e.code ? `(code ${e.code})` : null].filter(Boolean);
+    if (parts.length) return parts.join(" — ");
+  }
+  return String(error);
+}
+
 function buildOrderActivityNote(order: OrderRecord, kind: "created" | "updated"): string {
   const amount = order.amount ? `$${order.amount.toLocaleString("en-US", { maximumFractionDigits: 0 })}` : "";
   const name = order.order_name || "Untitled order";
@@ -125,8 +138,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(created, { status: 201 });
   } catch (error) {
     console.error("Orders POST error:", error);
-    const message = error instanceof Error ? error.message : "Failed to create order";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: describeError(error) }, { status: 500 });
   }
 }
 
@@ -162,8 +174,7 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json(updated);
   } catch (error) {
     console.error("Orders PATCH error:", error);
-    const message = error instanceof Error ? error.message : "Failed to update order";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: describeError(error) }, { status: 500 });
   }
 }
 
@@ -180,6 +191,6 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error("Orders DELETE error:", error);
-    return NextResponse.json({ error: "Failed to delete order" }, { status: 500 });
+    return NextResponse.json({ error: describeError(error) }, { status: 500 });
   }
 }
