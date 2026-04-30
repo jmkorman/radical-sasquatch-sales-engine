@@ -1,17 +1,41 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useSheetStore } from "@/stores/useSheetStore";
 import { useUIStore } from "@/stores/useUIStore";
 import { SyncIndicator } from "@/components/ui/SyncIndicator";
 import { calculateCommission } from "@/lib/commission/calculator";
 import { formatDate } from "@/lib/utils/dates";
+import { OrderRecord } from "@/types/orders";
 
 export function Header() {
-  const { data, syncStatus, lastSynced, fetchAllTabs } = useSheetStore();
+  const { syncStatus, lastSynced, fetchAllTabs } = useSheetStore();
   const { actionFeedback, clearActionFeedback } = useUIStore();
-  const commission = data ? calculateCommission(data) : 0;
+  const [orders, setOrders] = useState<OrderRecord[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadOrders() {
+      try {
+        const response = await fetch("/api/orders", { cache: "no-store" });
+        if (!response.ok) return;
+        const data = (await response.json()) as OrderRecord[];
+        if (!cancelled) setOrders(data);
+      } catch {
+        // Orders endpoint can be unavailable when supabase/orders.sql hasn't
+        // been run yet. Fall back to $0 commission silently.
+      }
+    }
+    void loadOrders();
+    // Refresh roughly when the sheet syncs, so closing/cancelling an order
+    // is reflected in the header without a hard refresh.
+    return () => {
+      cancelled = true;
+    };
+  }, [lastSynced]);
+
+  const commission = calculateCommission(orders);
 
   useEffect(() => {
     if (!actionFeedback) return;
@@ -56,7 +80,8 @@ export function Header() {
                 Est. Commission
               </div>
               <div className="text-sm font-semibold text-rs-gold sm:text-base">
-                ${commission.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}/mo
+                ${commission.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                <span className="ml-1 text-[10px] font-normal text-[#bcaef0]">last 30d</span>
               </div>
             </div>
 

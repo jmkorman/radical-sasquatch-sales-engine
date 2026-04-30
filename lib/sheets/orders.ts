@@ -1,6 +1,7 @@
 import { getSheetsClient, getSheetId } from "./client";
 import { randomUUID } from "crypto";
 import { indexToColumnLetter, ACTIVE_ACCOUNTS_COLUMNS } from "./schema";
+import { deleteRow } from "./write";
 import { formatDateForSheet } from "@/lib/utils/dates";
 import { normalizeOrderRecord } from "@/lib/orders/helpers";
 import { OrderRecord } from "@/types/orders";
@@ -181,6 +182,20 @@ export async function appendOrderToSheet(order: OrderRecord): Promise<OrderRecor
     ...order,
     sheet_row_index: parseUpdatedRowIndex(response.data.updates?.updatedRange) ?? order.sheet_row_index ?? null,
   };
+}
+
+/**
+ * Remove a row from the legacy Orders sheet by order ID. Returns true if a
+ * matching row was found and deleted. Used by the orders DELETE endpoint so
+ * that pre-cutover orders don't reappear on the next GET via the sheet merge.
+ */
+export async function deleteOrderFromSheet(orderId: string): Promise<boolean> {
+  if (!orderId) return false;
+  const existing = await getOrdersFromSheet();
+  const match = existing.find((order) => order.id === orderId);
+  if (!match?.sheet_row_index) return false;
+  await deleteRow(ORDERS_TAB, match.sheet_row_index);
+  return true;
 }
 
 export async function updateOrderInSheet(order: OrderRecord): Promise<void> {

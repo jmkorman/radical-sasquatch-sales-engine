@@ -1,40 +1,28 @@
-import { AllTabsData, AnyAccount, ActiveAccount } from "@/types/accounts";
+import { AllTabsData, AnyAccount } from "@/types/accounts";
+import { OrderRecord } from "@/types/orders";
 
-function getMonthlyOrder(account: AnyAccount): number {
-  if ("estMonthlyOrder" in account) {
-    return parseFloat((account.estMonthlyOrder ?? "").replace(/[$,]/g, "")) || 0;
-  }
-  if ("order" in account) {
-    return parseFloat(((account as ActiveAccount).order ?? "").replace(/[$,]/g, "")) || 0;
-  }
-  return 0;
-}
+const COMMISSION_RATE = 0.1;
+const WINDOW_DAYS = 30;
 
-function getCommissionRate(account: AnyAccount): number {
-  if ("commissionPct" in account) {
-    const raw = (account.commissionPct ?? "").replace(/%/g, "");
-    const parsed = parseFloat(raw);
-    return isNaN(parsed) ? 10 : parsed;
-  }
-  return 10;
-}
+/**
+ * Estimated commission = 10% of revenue from real orders booked in the last
+ * 30 days. Cancelled orders are excluded; everything else (New, Confirmed,
+ * In Production, Ready, Delivered, Invoiced/Paid) counts as booked revenue.
+ */
+export function calculateCommission(orders: OrderRecord[]): number {
+  const cutoff = Date.now() - WINDOW_DAYS * 24 * 60 * 60 * 1000;
 
-export function calculateCommission(data: AllTabsData): number {
-  const allAccounts: AnyAccount[] = [
-    ...data.restaurants,
-    ...data.retail,
-    ...data.catering,
-    ...data.foodTruck,
-    ...data.activeAccounts,
-  ];
+  const recentTotal = orders
+    .filter((order) => {
+      if (order.status === "Canceled") return false;
+      const dateStr = order.order_date || order.created_at;
+      if (!dateStr) return false;
+      const ts = new Date(dateStr).getTime();
+      return Number.isFinite(ts) && ts >= cutoff;
+    })
+    .reduce((sum, order) => sum + (Number.isFinite(order.amount) ? order.amount : 0), 0);
 
-  return allAccounts
-    .filter((a) => a.status === "Closed - Won")
-    .reduce((sum, account) => {
-      const monthly = getMonthlyOrder(account);
-      const rate = getCommissionRate(account) / 100;
-      return sum + monthly * rate;
-    }, 0);
+  return recentTotal * COMMISSION_RATE;
 }
 
 export function getStatusCounts(data: AllTabsData): Record<string, number> {

@@ -8,6 +8,7 @@ import {
 } from "@/lib/supabase/queries";
 import { normalizeOrderRecord } from "@/lib/orders/helpers";
 import {
+  deleteOrderFromSheet,
   ensureActiveAccountForOrder,
   getOrdersFromSheet,
   withOrderDefaults,
@@ -187,7 +188,17 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: "id is required" }, { status: 400 });
     }
 
-    await deleteOrder(id);
+    // Delete from Supabase (current source of truth) AND the legacy Orders
+    // sheet. Without the sheet delete, any pre-cutover order would be
+    // re-merged into the GET response and appear to "come back".
+    await Promise.all([
+      deleteOrder(id).catch((error) => {
+        console.error("Orders Supabase delete error:", error);
+      }),
+      deleteOrderFromSheet(id).catch((error) => {
+        console.error("Orders sheet delete error:", error);
+      }),
+    ]);
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error("Orders DELETE error:", error);
