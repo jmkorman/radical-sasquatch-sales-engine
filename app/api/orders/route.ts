@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  deleteActivityLogsForOrder,
   deleteOrder,
   getOrders,
   insertActivityLog,
@@ -49,7 +50,10 @@ function buildOrderActivityNote(order: OrderRecord, kind: "created" | "updated")
   else if (order.due_date) dueParts.push(`due ${order.due_date}`);
   const tail = dueParts.length ? ` (${dueParts.join(", ")})` : "";
   const action = kind === "created" ? "Order logged" : "Order updated";
-  return `${action}: ${name}${amount ? ` — ${amount}` : ""}${tail}`;
+  // The [order-id:UUID] marker lets the DELETE handler cascade-delete the
+  // matching timeline entries when the order itself is removed.
+  const idMarker = order.id ? `[order-id:${order.id}]\n` : "";
+  return `${idMarker}${action}: ${name}${amount ? ` — ${amount}` : ""}${tail}`;
 }
 
 async function logOrderActivity(order: OrderRecord, kind: "created" | "updated") {
@@ -172,6 +176,10 @@ export async function PATCH(request: NextRequest) {
     const dbOrder = await updateOrder(id, dbUpdates);
     const updated = normalizeOrderRecord({ ...nextOrder, ...dbOrder });
 
+    // Mirror the create path so PATCH edits appear in the account timeline
+    // (status changes, amount changes, fulfillment date moves, etc.).
+    await logOrderActivity(updated, "updated");
+
     return NextResponse.json(updated);
   } catch (error) {
     console.error("Orders PATCH error:", error);
@@ -191,12 +199,17 @@ export async function DELETE(request: NextRequest) {
     // Delete from Supabase (current source of truth) AND the legacy Orders
     // sheet. Without the sheet delete, any pre-cutover order would be
     // re-merged into the GET response and appear to "come back".
+    // Also soft-delete the order's timeline entries so they don't linger
+    // on the account view pointing at a now-deleted order.
     await Promise.all([
       deleteOrder(id).catch((error) => {
         console.error("Orders Supabase delete error:", error);
       }),
       deleteOrderFromSheet(id).catch((error) => {
         console.error("Orders sheet delete error:", error);
+      }),
+      deleteActivityLogsForOrder(id).catch((error) => {
+        console.error("Orders activity-log cascade error:", error);
       }),
     ]);
     return NextResponse.json({ success: true });

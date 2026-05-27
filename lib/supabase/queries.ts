@@ -103,6 +103,62 @@ export async function deleteAccountSnapshot(id: string): Promise<boolean> {
   return true;
 }
 
+/**
+ * Delete the account snapshot AND all of its dependent rows (orders,
+ * activity logs). Without this cascade, deleting an account leaves
+ * orphan rows that still show up in dashboards and order totals because
+ * they reference the now-deleted account_id.
+ *
+ * Activity logs are soft-deleted (is_deleted=true) to preserve the audit
+ * trail. Orders are hard-deleted because they're driving commission and
+ * pipeline math and orphaned values would inflate totals.
+ */
+export async function cascadeDeleteAccount(accountId: string): Promise<void> {
+  if (!accountId) return;
+  const supabase = createServerClient();
+
+  // Hard-delete orders first so commission/order rollups stop including them.
+  await supabase
+    .from("orders")
+    .delete()
+    .eq("account_id", accountId)
+    .then(() => undefined, (err) => {
+      if (!isMissingRelation(err)) console.error("cascadeDeleteAccount orders:", err);
+    });
+
+  // Soft-delete activity logs to keep audit trail recoverable.
+  await supabase
+    .from("activity_logs")
+    .update({ is_deleted: true })
+    .eq("account_id", accountId)
+    .then(() => undefined, (err) => {
+      if (!isMissingRelation(err)) console.error("cascadeDeleteAccount activity_logs:", err);
+    });
+
+  await deleteAccountSnapshot(accountId).catch((err) => {
+    if (!isMissingRelation(err)) console.error("cascadeDeleteAccount snapshot:", err);
+  });
+}
+
+/**
+ * Soft-delete any activity_logs row that references the given order id via
+ * the `[order-id:UUID]` marker embedded in its note. Called from the order
+ * DELETE handler so the order's "Order logged" / "Order updated" timeline
+ * entries disappear with the order itself.
+ */
+export async function deleteActivityLogsForOrder(orderId: string): Promise<void> {
+  if (!orderId) return;
+  const supabase = createServerClient();
+  await supabase
+    .from("activity_logs")
+    .update({ is_deleted: true })
+    .eq("source", "order")
+    .ilike("note", `%[order-id:${orderId}]%`)
+    .then(() => undefined, (err) => {
+      if (!isMissingRelation(err)) console.error("deleteActivityLogsForOrder:", err);
+    });
+}
+
 export async function insertActivityLog(entry: {
   id?: string;
   account_id: string;

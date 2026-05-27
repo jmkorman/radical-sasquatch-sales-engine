@@ -34,6 +34,47 @@ const GENERIC_DOMAINS = new Set([
   "msn.com",
 ]);
 
+// Common business-name tokens that match thousands of unrelated newsletters
+// and listings if used as a single-word fallback. Filtered out of
+// getSignificantAccountPhrases so they never produce a name-only hit.
+const NOISE_TOKENS = new Set([
+  "restaurant",
+  "restaurants",
+  "pizza",
+  "pizzeria",
+  "bakery",
+  "cafe",
+  "coffee",
+  "kitchen",
+  "grill",
+  "bar",
+  "bistro",
+  "deli",
+  "market",
+  "shop",
+  "store",
+  "company",
+  "group",
+  "and",
+  "the",
+  "llc",
+  "inc",
+  "corp",
+  "co",
+  "ltd",
+  "house",
+  "food",
+  "foods",
+  "catering",
+  "truck",
+  "trucks",
+  "eatery",
+  "diner",
+  "tavern",
+  "pub",
+]);
+const MIN_PHRASE_CHARS = 7;
+
 /** Strip "Re:", "Fwd:" prefixes, lowercase, collapse whitespace. */
 function normalizeSubject(raw: string | null | undefined): string {
   if (!raw) return "";
@@ -103,28 +144,58 @@ function normalizeForMatch(value: string): string {
     .trim();
 }
 
+/**
+ * Build the set of phrases that count as a "name match" against an email's
+ * searchable text. Only meaningful phrases are returned:
+ *   - the full normalized account name (always — exact match is high-signal)
+ *   - any individual token >= MIN_PHRASE_CHARS that is NOT a common noise word
+ *
+ * This kills the prior false-positive class where single tokens like "pizza",
+ * "kitchen", "bakery", or "boulder" would fire on any newsletter mentioning
+ * common food/business words.
+ */
 function getSignificantAccountPhrases(accountName: string): string[] {
   const normalized = normalizeForMatch(accountName);
   if (!normalized) return [];
-  const parts = normalized.split(" ").filter((part) => part.length >= 4);
+  const parts = normalized
+    .split(" ")
+    .filter((part) => part.length >= MIN_PHRASE_CHARS && !NOISE_TOKENS.has(part));
   return Array.from(new Set([normalized, ...parts]));
 }
 
+/**
+ * Newsletter / bulk-mail detection. If any of the standard bulk-mail headers
+ * are present, treat the message as automated and skip activity logging.
+ * Catches Substack, Mailchimp, marketing platforms, transactional senders, etc.
+ */
+function isNewsletter(message: GmailSentMessage): boolean {
+  if (message.listUnsubscribe?.trim()) return true;
+  if (message.listId?.trim()) return true;
+  if (message.autoSubmitted && message.autoSubmitted.toLowerCase() !== "no") return true;
+  const precedence = message.precedence?.toLowerCase().trim();
+  if (precedence === "bulk" || precedence === "list" || precedence === "junk") return true;
+  return false;
+}
+
+function isOwnerEmail(email: string): boolean {
+  return email.toLowerCase() === OWNER_EMAIL;
+}
+
 function isSent(message: GmailSentMessage): boolean {
-  return parseAddr(message.from).email.includes(OWNER_EMAIL);
+  return isOwnerEmail(parseAddr(message.from).email);
 }
 
 function getContactAddr(message: GmailSentMessage): { name: string; email: string } | null {
   const from = parseAddr(message.from);
   const to = parseAddr(message.to);
-  if (from.email && !from.email.includes(OWNER_EMAIL)) return from;
-  if (to.email && !to.email.includes(OWNER_EMAIL)) return to;
+  if (from.email && !isOwnerEmail(from.email)) return from;
+  if (to.email && !isOwnerEmail(to.email)) return to;
   return null;
 }
 
 function getNonOwnerAddrs(message: GmailSentMessage): Array<{ name: string; email: string }> {
   return [parseAddr(message.from), parseAddr(message.to)].filter(
-    (entry) => entry.email && !entry.email.includes(OWNER_EMAIL)
+    (entry) => entry.email && !isOwnerEmail(entry.email)
   );
 }
 
@@ -163,7 +234,8 @@ function matchMessage(
   message: GmailSentMessage,
   emailIdx: Map<string, AnyAccount>,
   domainIdx: Map<string, AnyAccount[]>,
-  accounts: AnyAccount[]
+  accounts: AnyAccount[],
+  options: { allowNameOnly?: boolean } = { allowNameOnly: true }
 ): { account: AnyAccount; pass: "email" | "domain" | "name" } | null {
   const contactAddrs = getNonOwnerAddrs(message);
   const contactEmails = contactAddrs.map((entry) => entry.email);
@@ -196,6 +268,11 @@ function matchMessage(
       return { account: narrowedByName[0], pass: "domain" };
     }
   }
+
+  // Name-only matching is risky for inbound mail: a newsletter mentioning the
+  // account in its body would be auto-attributed to that account. Callers
+  // can opt out by setting allowNameOnly: false.
+  if (options.allowNameOnly === false) return null;
 
   const nameMatches = accounts.filter((account) => accountMatchesMessage(account, message, contactNames));
   if (nameMatches.length === 1) {
@@ -264,13 +341,17 @@ async function logMessage(account: AnyAccount, message: GmailSentMessage) {
       await updateActivityLog(insertedLog.id, { follow_up_date: analysis.followUpDate });
     }
 
-    // Apply status transition if analyzer flagged one — but ONLY if it's a
-    // promotion. An outbound email to an account already at Sample Sent or
-    // Tasting Complete should never demote it back to Reached Out.
+    // Apply status transition if analyzer flagged one. Generally we only
+    // promote (so a Sample Sent account isn't demoted back to Reached Out),
+    // but "Not a Fit" is allowed as an explicit demotion — when the AI sees
+    // a clear "not interested" reply it's strictly more useful than letting
+    // the account languish at its current stage.
     const desiredStatus =
       analysis.suggestedStatus ??
       (EARLY_STAGE_STATUSES.has(account.status ?? "") ? "Reached Out" : null);
-    if (desiredStatus && desiredStatus !== account.status && isPromotion(account.status, desiredStatus)) {
+    const allowChange =
+      desiredStatus === "Not a Fit" || isPromotion(account.status, desiredStatus);
+    if (desiredStatus && desiredStatus !== account.status && allowChange) {
       await updateAccountSnapshot(account.id, { status: desiredStatus }).catch(() => {});
       await updateCell(
         account._tab,
@@ -386,6 +467,7 @@ export async function GET() {
 
     for (const message of messages) {
       if (!isSent(message)) continue;
+      if (isNewsletter(message)) continue;
       if (seenMessageIds.has(message.id)) continue;
 
       const { count } = await supabase
@@ -500,8 +582,11 @@ export async function GET() {
         for (const message of inboundMessages) {
           // Skip our own sent messages that may show in inbox
           if (isSent(message)) continue;
+          // Newsletters, marketing blasts, and auto-submitted mail are not
+          // real conversations — never log them or auto-attribute them.
+          if (isNewsletter(message)) continue;
           const sender = parseAddr(message.from);
-          if (!sender.email || sender.email.includes(OWNER_EMAIL)) continue;
+          if (!sender.email || isOwnerEmail(sender.email)) continue;
 
           // Fallback 1: thread match — most reliable
           let accountId: string | null = null;
@@ -520,9 +605,13 @@ export async function GET() {
             }
           }
 
-          // Fallback 2 + 3: domain / name match
+          // Fallback 2: domain match only. Name-only matching is too noisy
+          // on the inbound path — a newsletter mentioning an account in its
+          // body would otherwise get auto-attributed.
           if (!accountId) {
-            const match = matchMessage(message, emailIdx, domainIdx, accounts);
+            const match = matchMessage(message, emailIdx, domainIdx, accounts, {
+              allowNameOnly: false,
+            });
             if (match) {
               matchedAccount = match.account;
               accountId = getAccountStableId(match.account);
@@ -622,11 +711,14 @@ export async function GET() {
               inboundAnalysis.actionItemsAdded += analysis.actionItems.length;
             }
 
-            // Apply suggested status transition
+            // Apply suggested status transition. Promotions always allowed;
+            // "Not a Fit" is also allowed as an explicit demotion (matches
+            // outbound behavior).
             if (
               analysis.suggestedStatus &&
               analysis.suggestedStatus !== matchedAccount.status &&
-              isPromotion(matchedAccount.status, analysis.suggestedStatus)
+              (analysis.suggestedStatus === "Not a Fit" ||
+                isPromotion(matchedAccount.status, analysis.suggestedStatus))
             ) {
               await updateAccountSnapshot(accountId, { status: analysis.suggestedStatus }).catch(
                 () => {}

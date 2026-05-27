@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { deleteRow, getCellValue, updateCell } from "@/lib/sheets/write";
 import { findAccountBySheetPosition } from "@/lib/accounts/source";
 import { toAccountSnapshot } from "@/lib/accounts/snapshot";
-import { deleteAccountSnapshot, upsertAccountSnapshot } from "@/lib/supabase/queries";
+import { cascadeDeleteAccount, upsertAccountSnapshot } from "@/lib/supabase/queries";
 import { AnyAccount } from "@/types/accounts";
 import {
   getAccountColumnIndex,
@@ -210,7 +210,9 @@ export async function POST(request: NextRequest) {
 
     if (shouldDeleteRow) {
       if (account) {
-        await deleteAccountSnapshot(account.id);
+        // Cascade so orders + activity logs don't linger as orphans pointing
+        // at an account_id that no longer exists.
+        await cascadeDeleteAccount(account.id);
       }
       await syncDeleteToSheets(tab, rowIndex);
       return NextResponse.json({ success: true });

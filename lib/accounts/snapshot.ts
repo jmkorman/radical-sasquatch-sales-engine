@@ -10,7 +10,7 @@ import {
   TabName,
   TabSlug,
 } from "@/types/accounts";
-import { getAccountPrimaryId } from "@/lib/accounts/identity";
+import { getAccountPrimaryId, normalizeAccountName } from "@/lib/accounts/identity";
 import { TAB_SLUG_MAP } from "@/lib/utils/constants";
 
 export interface AccountSnapshot {
@@ -163,6 +163,36 @@ export function snapshotToAccount(snapshot: AccountSnapshot): AnyAccount {
   } satisfies RestaurantAccount;
 }
 
+/**
+ * Dedupe snapshots by normalized account name across tabs.
+ *
+ * The Supabase `accounts` table is keyed by `${tabSlug}:${normalizedName}`, so
+ * the same account moved (or duplicated) across tabs can leave stale rows
+ * behind that point at tabs the account no longer lives in. Without this
+ * dedup, names like "Harmons" can appear at the top of multiple pipeline
+ * tabs because each stale snapshot is routed into its own bucket.
+ *
+ * Strategy: keep only the most recently updated snapshot for each normalized
+ * account name. That snapshot wins because it reflects the most recent move
+ * or edit the user performed.
+ */
+function dedupeSnapshotsByName(snapshots: AccountSnapshot[]): AccountSnapshot[] {
+  const winners = new Map<string, AccountSnapshot>();
+  for (const snapshot of snapshots) {
+    const key = normalizeAccountName(snapshot.account_name || "");
+    if (!key) continue;
+    const existing = winners.get(key);
+    if (!existing) {
+      winners.set(key, snapshot);
+      continue;
+    }
+    const existingTs = Date.parse(existing.updated_at || "") || 0;
+    const incomingTs = Date.parse(snapshot.updated_at || "") || 0;
+    if (incomingTs > existingTs) winners.set(key, snapshot);
+  }
+  return Array.from(winners.values());
+}
+
 export function snapshotsToTabs(snapshots: AccountSnapshot[]): AllTabsData {
   const data: AllTabsData = {
     restaurants: [],
@@ -172,7 +202,7 @@ export function snapshotsToTabs(snapshots: AccountSnapshot[]): AllTabsData {
     activeAccounts: [],
   };
 
-  for (const snapshot of snapshots) {
+  for (const snapshot of dedupeSnapshotsByName(snapshots)) {
     const account = snapshotToAccount(snapshot);
     switch (account._tabSlug) {
       case "restaurants":

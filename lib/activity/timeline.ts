@@ -42,6 +42,27 @@ export function getScheduledFollowUpLogForAccount(logs: ActivityLog[], account: 
     )[0] ?? null;
 }
 
+/**
+ * Single source of truth for "what stage is this account in?"
+ *
+ * Activity log status wins over the sheet/snapshot because the log is the
+ * one writer touched on every email/note/manual change, while the
+ * snapshot can drift if an automation only updated one side. Falls back
+ * to the snapshot value, then "Identified" if neither has a value.
+ *
+ * Use this everywhere a UI surface needs to display or group by status
+ * (CommandTable rows, StageBoard kanban columns, dashboard rollups).
+ */
+export function getResolvedAccountStatus(account: AnyAccount, logs: ActivityLog[]): string {
+  const latestStatusLog = getLogsForAccount(logs, account).find(
+    (log) => log.status_after && log.status_after.trim()
+  );
+  const fromLog = latestStatusLog?.status_after?.trim();
+  if (fromLog) return fromLog;
+  if (account.status && account.status.trim()) return account.status;
+  return "Identified";
+}
+
 export function getResolvedFollowUpDate(account: AnyAccount, logs: ActivityLog[]): string | null {
   const scheduledLog = getScheduledFollowUpLogForAccount(logs, account);
   if (scheduledLog?.follow_up_date) return scheduledLog.follow_up_date;

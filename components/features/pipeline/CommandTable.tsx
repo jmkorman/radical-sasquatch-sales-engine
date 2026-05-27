@@ -9,7 +9,12 @@ import { LogOutreachModal } from "@/components/features/dashboard/LogOutreachMod
 import { useSheetStore } from "@/stores/useSheetStore";
 import { useUIStore } from "@/stores/useUIStore";
 import { parseActivityNote } from "@/lib/activity/notes";
-import { getLatestContactLogForAccount, getLogsForAccount, getScheduledFollowUpLogForAccount } from "@/lib/activity/timeline";
+import {
+  getLatestContactLogForAccount,
+  getLogsForAccount,
+  getResolvedAccountStatus,
+  getScheduledFollowUpLogForAccount,
+} from "@/lib/activity/timeline";
 import { persistActivityEntry } from "@/lib/activity/persist";
 import { todayISO } from "@/lib/utils/dates";
 import {
@@ -91,11 +96,25 @@ export function CommandTable({
     return map;
   }, [serverLogs]);
 
+  // Resolved status = latest activity log status_after (if any) → sheet
+  // status → "Identified". Shared with StageBoard so both views agree on
+  // which stage each account is in regardless of which side was written last.
+  const resolvedStatusByAccount = useMemo(() => {
+    const map = new Map<string, string>();
+    all.forEach((a) => {
+      map.set(getAccountStableId(a), getResolvedAccountStatus(a, serverLogs));
+    });
+    return map;
+  }, [all, serverLogs]);
+
   const statusCounts = useMemo(() => {
     const c: Record<string, number> = {};
-    all.forEach((a) => { const s = a.status || ""; c[s] = (c[s] || 0) + 1; });
+    all.forEach((a) => {
+      const s = resolvedStatusByAccount.get(getAccountStableId(a)) ?? "";
+      c[s] = (c[s] || 0) + 1;
+    });
     return c;
-  }, [all]);
+  }, [all, resolvedStatusByAccount]);
 
   const rows = useMemo(() => {
     let list = all;
@@ -113,7 +132,11 @@ export function CommandTable({
         return false;
       });
     }
-    if (statusFilter) list = list.filter((a) => a.status === statusFilter);
+    if (statusFilter) {
+      list = list.filter(
+        (a) => (resolvedStatusByAccount.get(getAccountStableId(a)) ?? "") === statusFilter
+      );
+    }
     return [...list].sort((a, b) => {
       if (sortBy === "name") return a.account.localeCompare(b.account);
       if (sortBy === "stale")
@@ -131,7 +154,7 @@ export function CommandTable({
         activityScore(a, getResolvedLastContactDate(a, serverLogs))
       ); // active default
     });
-  }, [all, search, statusFilter, sortBy, notesByAccountId, serverLogs]);
+  }, [all, search, statusFilter, sortBy, notesByAccountId, serverLogs, resolvedStatusByAccount]);
 
   const rowPad =
     tweaks.density === "compact" ? "8px 14px" : tweaks.density === "roomy" ? "18px 16px" : "12px 16px";

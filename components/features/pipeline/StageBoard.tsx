@@ -18,7 +18,10 @@ import {
 import { StatusDot } from "./StatusIndicators";
 import { PipelineSubTabs } from "./CommandTable";
 import { getRevenueTier } from "@/lib/utils/revenue";
-import { getLatestContactLogForAccount, getLogsForAccount } from "@/lib/activity/timeline";
+import {
+  getLatestContactLogForAccount,
+  getResolvedAccountStatus,
+} from "@/lib/activity/timeline";
 import Link from "next/link";
 
 const PIPELINE_TABS: PipelineTabName[] = ["All", "Restaurants", "Retail", "Catering", "Food Truck"];
@@ -62,13 +65,10 @@ export function StageBoard({
 
   const boardAccounts = useMemo<BoardAccount[]>(() => {
     return all.map((account) => {
-      const accountLogs = getLogsForAccount(serverLogs, account);
-      const latestStatus = accountLogs.find((log) => log.status_after)?.status_after?.trim();
       const latestContact = getLatestContactLogForAccount(serverLogs, account);
-
       return {
         account,
-        status: account.status || latestStatus || "Identified",
+        status: getResolvedAccountStatus(account, serverLogs),
         lastContactDate: latestContact?.created_at || account.contactDate,
       };
     });

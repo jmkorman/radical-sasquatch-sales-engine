@@ -10,6 +10,13 @@ export interface GmailSentMessage {
   to: string;
   date: string;
   internalDate: string;
+  // Newsletter / bulk-mail signals. Populated when present on the message —
+  // any non-empty value strongly indicates an automated/bulk message that
+  // should not count as a real direct outreach.
+  listUnsubscribe: string;
+  precedence: string;
+  listId: string;
+  autoSubmitted: string;
 }
 
 function extractPlainBody(payload: Record<string, unknown> | null | undefined): string {
@@ -97,6 +104,10 @@ export async function getSentMessagesById(ids: string[]): Promise<GmailSentMessa
             to: getHeader("To"),
             date: getHeader("Date"),
             internalDate: message.data.internalDate ?? "",
+            listUnsubscribe: getHeader("List-Unsubscribe"),
+            precedence: getHeader("Precedence"),
+            listId: getHeader("List-Id"),
+            autoSubmitted: getHeader("Auto-Submitted"),
           } satisfies GmailSentMessage;
         } catch {
           return null;
