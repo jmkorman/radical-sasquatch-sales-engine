@@ -177,8 +177,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Move failed: could not resolve new row" }, { status: 500 });
     }
 
-    // 2) Update Supabase: delete old snapshot, insert new one with the new tab/row
-    await deleteAccountSnapshot(account.id).catch(() => {});
+    // 2) Update Supabase: delete old snapshot, insert new one with the new tab/row.
+    // If this delete silently fails, the old row lingers in its original tab and
+    // the account shows up in two tabs at once (the "Harmons in every tab" bug).
+    // Log it so we can spot the leak instead of papering over it with dedup.
+    await deleteAccountSnapshot(account.id).catch((err) =>
+      logError("accounts/move/delete-old-snapshot", err, { id: account.id })
+    );
 
     const movedAccount: AnyAccount = {
       ...account,
