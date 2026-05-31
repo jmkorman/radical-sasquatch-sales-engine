@@ -8,12 +8,14 @@ export async function generateJSON<T>(opts: {
   system: string;
   user: string;
   maxTokens?: number;
+  /** Override the model. Use a Haiku variant for cheap/fast classification calls. */
+  model?: string;
 }): Promise<T | null> {
   if (!hasAnthropic()) return null;
   try {
     const client = new Anthropic();
     const res = await client.messages.create({
-      model: "claude-opus-4-6",
+      model: opts.model ?? "claude-opus-4-6",
       max_tokens: opts.maxTokens ?? 2000,
       system: opts.system,
       messages: [{ role: "user", content: opts.user }],
