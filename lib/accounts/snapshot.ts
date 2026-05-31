@@ -57,6 +57,17 @@ export function toAccountSnapshot(account: AnyAccount): AccountSnapshot {
   };
 }
 
+/**
+ * Auto-created accounts whose inference confidence landed in the review band
+ * (70–84) are flagged `review_pending` in their raw payload. They live in
+ * Supabase but are hidden from the pipeline tabs until Jake approves them in
+ * Settings → Pending Review.
+ */
+export function isPendingReview(snapshot: AccountSnapshot): boolean {
+  const raw = (snapshot.raw ?? {}) as Record<string, unknown>;
+  return raw.review_pending === true;
+}
+
 function cleanSnapshotValue(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
@@ -203,6 +214,8 @@ export function snapshotsToTabs(snapshots: AccountSnapshot[]): AllTabsData {
   };
 
   for (const snapshot of dedupeSnapshotsByName(snapshots)) {
+    // Hide accounts still awaiting manual review from the pipeline tabs.
+    if (isPendingReview(snapshot)) continue;
     const account = snapshotToAccount(snapshot);
     switch (account._tabSlug) {
       case "restaurants":

@@ -25,10 +25,14 @@ import {
   parseAddr,
   scoreMessage,
   scoreCandidates,
+  emailDomain,
   MatchIndexes,
 } from "@/lib/email/matcher";
 import { disambiguate } from "@/lib/email/disambiguator";
 import { inferAndCreateAccount } from "@/lib/email/inferAccount";
+import { extractSignatureFields } from "@/lib/email/signature";
+import { getPhoneColumnIndex } from "@/lib/sheets/schema";
+import { getAccountContacts, updateAccountContact } from "@/lib/contacts/store";
 
 export const dynamic = "force-dynamic";
 
@@ -245,11 +249,12 @@ export async function GET() {
     const messages = await getSentMessagesById(newIds.slice(0, 25));
 
     let imported = 0;
-    const breakdown = { score: 0, ai: 0, inferred: 0, skipped: 0 };
+    const breakdown = { score: 0, ai: 0, inferred: 0, pendingReview: 0, skipped: 0 };
     const importedAccounts: string[] = [];
     const importedAccountPaths: string[] = [];
     const importedLogIds: string[] = [];
     const inferredAccounts: Array<{ name: string; tab: string; reason: string }> = [];
+    const pendingReview: Array<{ name: string; tab: string; reason: string }> = [];
 
     for (const message of messages) {
       if (!isSent(message)) continue;
@@ -315,15 +320,30 @@ export async function GET() {
       if (!resolved) {
         const created = await inferAndCreateAccount({ message, existingAccounts: liveAccounts });
         if (created) {
+          seenMessageIds.add(message.id);
+          // Log the triggering email against the new account either way so the
+          // first-touch is preserved once it's live.
+          const insertedLog = await logMessage(created.account, message);
+          importedLogIds.push(insertedLog.id);
+
+          if (created.pending) {
+            // Parked for manual review — keep it out of the live match index
+            // and the imported tally until Jake approves it.
+            pendingReview.push({
+              name: created.account.account,
+              tab: created.account._tab,
+              reason: created.inference.reason,
+            });
+            breakdown.pendingReview++;
+            continue;
+          }
+
           liveAccounts.push(created.account);
           indexes = buildIndexes(liveAccounts);
-          seenMessageIds.add(message.id);
-          const insertedLog = await logMessage(created.account, message);
           importedAccounts.push(created.account.account);
           importedAccountPaths.push(
             `/accounts/${created.account._tabSlug}/${created.account._rowIndex}`
           );
-          importedLogIds.push(insertedLog.id);
           inferredAccounts.push({
             name: created.account.account,
             tab: created.account._tab,
@@ -436,6 +456,42 @@ export async function GET() {
           else if (result.action === "error") inboundCapture.errors++;
           else inboundCapture.skipped++;
 
+          // Signature enrichment: pull phone/title/website from the sig block
+          // and fill blanks on the contact + account (never overwrite).
+          try {
+            const senderDomain = emailDomain(sender.email);
+            const sig = extractSignatureFields(
+              message.body,
+              senderDomain ? [senderDomain] : []
+            );
+            if (result.contactId && (sig.phone || sig.title)) {
+              const contacts = await getAccountContacts(accountId);
+              const contact = contacts.find((c) => c.id === result.contactId);
+              if (contact) {
+                const updates: { phone?: string; role?: string } = {};
+                if (sig.phone && !contact.phone?.trim()) updates.phone = sig.phone;
+                if (sig.title && !contact.role?.trim()) updates.role = sig.title;
+                if (Object.keys(updates).length) {
+                  await updateAccountContact(accountId, contact.id, updates).catch(() => {});
+                }
+              }
+            }
+            // Account-level phone: fill only if the account has none.
+            if (sig.phone && !matchedAccount.phone?.trim()) {
+              await updateAccountSnapshot(accountId, { phone: sig.phone }).catch(() => {});
+              if (matchedAccount._rowIndex > 0) {
+                await updateCell(
+                  matchedAccount._tab,
+                  matchedAccount._rowIndex,
+                  getPhoneColumnIndex(matchedAccount._tab),
+                  sig.phone
+                ).catch(() => {});
+              }
+            }
+          } catch (error) {
+            await logError("gmail-poll/signature-enrich", error, { messageId: message.id }, "warn");
+          }
+
           if (seenMessageIds.has(message.id)) continue;
           const { count: alreadyLogged } = await supabase
             .from("activity_logs")
@@ -547,6 +603,7 @@ export async function GET() {
       importedAccountPaths,
       importedLogIds,
       inferredAccounts,
+      pendingReview,
       checked: allIds.length,
       accounts: liveAccounts.length,
       breakdown,

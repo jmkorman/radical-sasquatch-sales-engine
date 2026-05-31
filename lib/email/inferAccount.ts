@@ -13,14 +13,18 @@
 
 import { generateJSON, hasAnthropic } from "@/lib/ai/anthropic";
 import { GmailSentMessage } from "@/lib/gmail/sent";
-import { TabName, TabSlug, AnyAccount } from "@/types/accounts";
+import { TabName, TabSlug, AnyAccount, StatusValue } from "@/types/accounts";
 import { TAB_NAME_TO_SLUG } from "@/lib/utils/constants";
 import { buildStableAccountId, normalizeAccountName } from "@/lib/accounts/identity";
 import { upsertAccountSnapshot } from "@/lib/supabase/queries";
 import { toAccountSnapshot } from "@/lib/accounts/snapshot";
 import { parseAddr, isOwnerEmail, emailDomain, extractUrlDomain } from "@/lib/email/matcher";
 
+// Below this, we don't create anything. Between MIN and LIVE, the account is
+// created but parked in the review queue. At/above LIVE it goes live as a
+// "Reached Out" pipeline account immediately.
 const MIN_CONFIDENCE = 70;
+const LIVE_CONFIDENCE = 85;
 
 export interface InferAccountInput {
   message: GmailSentMessage;
@@ -126,9 +130,12 @@ ${existingNames.join(", ")}`;
  */
 export async function inferAndCreateAccount(
   input: InferAccountInput
-): Promise<{ account: AnyAccount; inference: InferredAccount } | null> {
+): Promise<{ account: AnyAccount; inference: InferredAccount; pending: boolean } | null> {
   const inference = await inferAccount(input);
   if (!inference) return null;
+
+  // 70–84 → parked for manual review; 85+ → live immediately.
+  const pending = inference.confidence < LIVE_CONFIDENCE;
 
   const tabSlug: TabSlug = TAB_NAME_TO_SLUG[inference.tab];
   const recipient = parseAddr(input.message.to);
@@ -147,7 +154,9 @@ export async function inferAndCreateAccount(
     _tabSlug: tabSlug,
     account: inference.companyName,
     type: "",
-    status: "Reached Out" as const,
+    // Pending accounts stay "Identified" until approved; live ones jump to
+    // "Reached Out" since the outbound email is the first touch.
+    status: (pending ? "Identified" : "Reached Out") as StatusValue,
     nextSteps: "",
     nextActionType: "",
     contactDate: "",
@@ -214,12 +223,24 @@ export async function inferAndCreateAccount(
     };
   }
 
-  const ok = await upsertAccountSnapshot(toAccountSnapshot(account));
+  const snapshot = toAccountSnapshot(account);
+  if (pending) {
+    // Flag in the raw payload so snapshotsToTabs hides it from the pipeline
+    // until Jake approves it in Settings → Pending Review.
+    snapshot.raw = {
+      ...snapshot.raw,
+      review_pending: true,
+      review_reason: inference.reason,
+      review_confidence: inference.confidence,
+    };
+  }
+
+  const ok = await upsertAccountSnapshot(snapshot);
   if (!ok) return null;
 
   // Sanity: ensure website domain (or recipient domain) maps to this account
   // so subsequent messages in the same poll find it via the domain index.
   void extractUrlDomain(websiteGuess);
 
-  return { account, inference };
+  return { account, inference, pending };
 }

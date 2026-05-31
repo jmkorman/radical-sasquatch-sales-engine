@@ -58,6 +58,33 @@ function getOAuthClient() {
   return oauth2Client;
 }
 
+export interface GmailHealth {
+  status: "ok" | "not_configured" | "error";
+  email?: string;
+  error?: string;
+}
+
+/**
+ * Lightweight Gmail connectivity probe for the health heartbeat. Unlike the
+ * list helpers (which swallow errors and return []), this surfaces auth
+ * failures so a dead/expired refresh token actually shows up as unhealthy.
+ */
+export async function checkGmailConnectivity(): Promise<GmailHealth> {
+  const auth = getOAuthClient();
+  if (!auth) return { status: "not_configured" };
+
+  try {
+    const gmail = google.gmail({ version: "v1", auth });
+    const profile = await gmail.users.getProfile({ userId: "me" });
+    return { status: "ok", email: profile.data.emailAddress ?? undefined };
+  } catch (error) {
+    return {
+      status: "error",
+      error: error instanceof Error ? error.message : "Unknown Gmail error",
+    };
+  }
+}
+
 export async function listRecentSentMessageIds(query: string, maxResults = 50): Promise<string[]> {
   const auth = getOAuthClient();
   if (!auth) return [];

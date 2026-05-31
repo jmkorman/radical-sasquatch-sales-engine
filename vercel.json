@@ -1,5 +1,7 @@
 {
   "crons": [
-    { "path": "/api/notion/sync", "schedule": "0 0 * * *" }
+    { "path": "/api/notion/sync", "schedule": "0 0 * * *" },
+    { "path": "/api/cron/stale-sweep", "schedule": "0 9 * * *" },
+    { "path": "/api/cron/health", "schedule": "0 */6 * * *" }
   ]
 }

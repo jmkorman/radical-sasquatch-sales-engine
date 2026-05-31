@@ -7,6 +7,7 @@ import { useSheetStore } from "@/stores/useSheetStore";
 import { CHANNEL_URGENCY_THRESHOLDS } from "@/lib/utils/constants";
 import { ErrorLogViewer } from "@/components/features/settings/ErrorLogViewer";
 import { GmailLogCleanup } from "@/components/features/settings/GmailLogCleanup";
+import { PendingReviewQueue } from "@/components/features/settings/PendingReviewQueue";
 
 type EnvStatus = {
   googleSheets: boolean;
@@ -70,6 +71,9 @@ export default function SettingsPage() {
         <h2 className="text-2xl font-black uppercase tracking-[0.1em] text-rs-gold">Settings</h2>
         <p className="text-sm text-[#d8ccfb] mt-1">Configuration, integrations, and urgency thresholds.</p>
       </div>
+
+      {/* Pending Review queue (auto-created accounts awaiting approval) */}
+      <PendingReviewQueue />
 
       {/* Error Log */}
       <ErrorLogViewer />

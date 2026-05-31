@@ -50,6 +50,16 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // Scheduled jobs (Vercel cron) authenticate with a Bearer CRON_SECRET header
+  // instead of the app_session cookie. Let those through here so the route's
+  // own CRON_SECRET check can run — without this, the session gate below would
+  // 401 every cron invocation.
+  const cronSecret = process.env.CRON_SECRET;
+  const isCronPath = pathname.startsWith("/api/cron/") || pathname === "/api/notion/sync";
+  if (cronSecret && isCronPath && request.headers.get("authorization") === `Bearer ${cronSecret}`) {
+    return NextResponse.next();
+  }
+
   const token = request.cookies.get("app_session")?.value;
   const authenticated = token ? await verifySessionToken(token) : false;
 
