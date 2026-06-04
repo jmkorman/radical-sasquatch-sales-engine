@@ -499,7 +499,7 @@ export function CommandTable({
               selected._rowIndex === account._rowIndex;
             return (
 	              <TableRow
-                key={`${account._tab}_${account._rowIndex}`}
+                key={account.id || `${account._tab}_${account._rowIndex}`}
                 account={account}
                 selected={isSel}
 	                onSelect={() => setSelected(isSel ? null : account)}

@@ -293,7 +293,7 @@ function StageColumn({
       <div style={{ padding: 10, display: "flex", flexDirection: "column", gap: 8, flex: 1 }}>
         {accounts.map((item) => (
           <StageCard
-            key={`${item.account._tab}_${item.account._rowIndex}`}
+            key={item.account.id || `${item.account._tab}_${item.account._rowIndex}`}
             account={item.account}
             lastContactDate={item.lastContactDate}
             tweaks={tweaks}
