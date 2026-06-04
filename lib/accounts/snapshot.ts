@@ -208,7 +208,7 @@ function dedupeSnapshotsByName(snapshots: AccountSnapshot[]): AccountSnapshot[] 
   // one. Sheet accounts (row_index > 0) are exempt — they may legitimately
   // exist in multiple tabs as independent business relationships.
   const inferredWinners = new Map<string, AccountSnapshot>();
-  for (const s of tabWinners.values()) {
+  for (const s of Array.from(tabWinners.values())) {
     if (Number(s.row_index) !== 0) continue;
     const name = normalizeAccountName(s.account_name || "");
     if (!name) continue;
@@ -220,7 +220,7 @@ function dedupeSnapshotsByName(snapshots: AccountSnapshot[]): AccountSnapshot[] 
   }
 
   const result: AccountSnapshot[] = [];
-  for (const s of tabWinners.values()) {
+  for (const s of Array.from(tabWinners.values())) {
     if (Number(s.row_index) !== 0) {
       result.push(s); // Sheet accounts always kept
     } else {
