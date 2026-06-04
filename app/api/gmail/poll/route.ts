@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAccountsData } from "@/lib/accounts/source";
-import { getAllAccounts } from "@/lib/accounts/snapshot";
+import { getAllAccounts, isPendingReview, snapshotToAccount } from "@/lib/accounts/snapshot";
 import { getAccountStableId } from "@/lib/accounts/identity";
 import { extractGmailMessageId } from "@/lib/activity/gmailMarkers";
 import { buildGmailActivityLogId } from "@/lib/gmail/logId";
@@ -8,7 +8,7 @@ import { GmailSentMessage, getSentMessagesById, listRecentSentMessageIds } from 
 import { updateCell } from "@/lib/sheets/write";
 import { getContactNameColumnIndex, getEmailColumnIndex, getStatusColumnIndex } from "@/lib/sheets/schema";
 import { createServerClient } from "@/lib/supabase/server";
-import { insertActivityLog, updateAccountSnapshot, updateActivityLog } from "@/lib/supabase/queries";
+import { getAccountSnapshots, insertActivityLog, updateAccountSnapshot, updateActivityLog } from "@/lib/supabase/queries";
 import { AnyAccount } from "@/types/accounts";
 import { captureInboundContact } from "@/lib/contacts/autoCapture";
 import { decodeHtmlEntities } from "@/lib/utils/htmlEntities";
@@ -211,6 +211,15 @@ export async function GET() {
     const accounts = getAllAccounts(data);
     if (!accounts.length) return NextResponse.json({ imported: 0, checked: 0, accounts: 0 });
 
+    // Load pending-review accounts so inference won't re-create an account
+    // that's already in the review queue under a different tab classification.
+    const allSnapshots = await getAccountSnapshots();
+    const pendingAccounts = allSnapshots.filter(isPendingReview).map(snapshotToAccount);
+    // accountsForInference is a superset used only for dupe-checking in inferAndCreateAccount.
+    // liveAccounts (used for the matcher) stays pipeline-only so pending accounts
+    // don't attract email attribution before they're approved.
+    const accountsForInference: AnyAccount[] = [...accounts, ...pendingAccounts];
+
     const supabase = createServerClient();
     const { data: gmailNotes } = await supabase
       .from("activity_logs")
@@ -319,13 +328,17 @@ export async function GET() {
 
       // No match → try to auto-infer a new account from the email content.
       if (!resolved) {
-        const created = await inferAndCreateAccount({ message, existingAccounts: liveAccounts });
+        const created = await inferAndCreateAccount({ message, existingAccounts: accountsForInference });
         if (created) {
           seenMessageIds.add(message.id);
           // Log the triggering email against the new account either way so the
           // first-touch is preserved once it's live.
           const insertedLog = await logMessage(created.account, message);
           importedLogIds.push(insertedLog.id);
+
+          // Always add to inference list so subsequent messages in the same
+          // poll batch don't create yet another duplicate.
+          accountsForInference.push(created.account);
 
           if (created.pending) {
             // Parked for manual review — keep it out of the live match index

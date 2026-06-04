@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAccountSnapshots, updateAccountSnapshot, cascadeDeleteAccount } from "@/lib/supabase/queries";
 import { isPendingReview } from "@/lib/accounts/snapshot";
+import { normalizeAccountName } from "@/lib/accounts/identity";
 import { logError } from "@/lib/errors/log";
 
 export const dynamic = "force-dynamic";
@@ -72,6 +73,20 @@ export async function POST(request: NextRequest) {
     delete raw.review_pending;
     delete raw.review_reason;
     delete raw.review_confidence;
+
+    // Delete any duplicate live (non-pending) auto-inferred account with the
+    // same name but a different tab. These are created when the Gmail poll
+    // re-infers an account that was already in the review queue.
+    const normalizedName = normalizeAccountName(snapshot.account_name || "");
+    if (normalizedName) {
+      for (const s of snapshots) {
+        if (s.id === id) continue;
+        if (Number(s.row_index) !== 0) continue; // only auto-inferred accounts
+        if (isPendingReview(s)) continue; // only live duplicates
+        if (normalizeAccountName(s.account_name || "") !== normalizedName) continue;
+        await cascadeDeleteAccount(s.id).catch(() => {});
+      }
+    }
 
     await updateAccountSnapshot(id, { raw });
     return NextResponse.json({ ok: true, action });

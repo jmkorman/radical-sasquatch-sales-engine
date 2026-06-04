@@ -188,23 +188,47 @@ export function snapshotToAccount(snapshot: AccountSnapshot): AnyAccount {
  * or edit the user performed.
  */
 function dedupeSnapshotsByName(snapshots: AccountSnapshot[]): AccountSnapshot[] {
-  const winners = new Map<string, AccountSnapshot>();
+  // Pass 1: per-(tab, name) dedup — keep the most recently updated snapshot.
+  // Preserves accounts legitimately in multiple tabs (e.g. Denver Beer Co in
+  // Restaurants + Food Truck as separate sheet rows with rowIndex > 0).
+  const tabWinners = new Map<string, AccountSnapshot>();
   for (const snapshot of snapshots) {
-    // Key includes tab_slug so the same account name in different tabs is
-    // kept — e.g. "Denver Beer Co" legitimately exists in both Restaurants
-    // and Food Truck. Only true duplicates within the same tab are collapsed.
     const key = `${snapshot.tab_slug ?? ""}:${normalizeAccountName(snapshot.account_name || "")}`;
     if (!key || key === ":") continue;
-    const existing = winners.get(key);
-    if (!existing) {
-      winners.set(key, snapshot);
-      continue;
-    }
+    const existing = tabWinners.get(key);
+    if (!existing) { tabWinners.set(key, snapshot); continue; }
     const existingTs = Date.parse(existing.updated_at || "") || 0;
     const incomingTs = Date.parse(snapshot.updated_at || "") || 0;
-    if (incomingTs > existingTs) winners.set(key, snapshot);
+    if (incomingTs > existingTs) tabWinners.set(key, snapshot);
   }
-  return Array.from(winners.values());
+
+  // Pass 2: cross-tab dedup for auto-inferred accounts (row_index === 0).
+  // The Gmail poll may re-infer an account already in pending review with a
+  // different tab, creating a duplicate. Keep only the most recently updated
+  // one. Sheet accounts (row_index > 0) are exempt — they may legitimately
+  // exist in multiple tabs as independent business relationships.
+  const inferredWinners = new Map<string, AccountSnapshot>();
+  for (const s of tabWinners.values()) {
+    if (Number(s.row_index) !== 0) continue;
+    const name = normalizeAccountName(s.account_name || "");
+    if (!name) continue;
+    const existing = inferredWinners.get(name);
+    if (!existing) { inferredWinners.set(name, s); continue; }
+    const existingTs = Date.parse(existing.updated_at || "") || 0;
+    const incomingTs = Date.parse(s.updated_at || "") || 0;
+    if (incomingTs > existingTs) inferredWinners.set(name, s);
+  }
+
+  const result: AccountSnapshot[] = [];
+  for (const s of tabWinners.values()) {
+    if (Number(s.row_index) !== 0) {
+      result.push(s); // Sheet accounts always kept
+    } else {
+      const name = normalizeAccountName(s.account_name || "");
+      if (!name || inferredWinners.get(name) === s) result.push(s);
+    }
+  }
+  return result;
 }
 
 export function snapshotsToTabs(snapshots: AccountSnapshot[]): AllTabsData {
