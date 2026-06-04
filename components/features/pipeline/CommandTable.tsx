@@ -167,6 +167,7 @@ export function CommandTable({
       body: JSON.stringify({
         tab: account._tab,
         rowIndex: account._rowIndex,
+        accountId: account.id,
         newStatus,
       }),
     });
@@ -225,6 +226,7 @@ export function CommandTable({
       body: JSON.stringify({
         tab: modalAccount._tab,
         rowIndex: modalAccount._rowIndex,
+        accountId: modalAccount.id,
         newStatus: outreachData.statusAfter,
         contactDate: todayISO(),
         nextSteps: outreachData.note,

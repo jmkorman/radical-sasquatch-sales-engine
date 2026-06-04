@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { deleteRow, getCellValue, updateCell } from "@/lib/sheets/write";
-import { findAccountBySheetPosition } from "@/lib/accounts/source";
-import { toAccountSnapshot } from "@/lib/accounts/snapshot";
+import { findAccountBySheetPosition, getAccountsData } from "@/lib/accounts/source";
+import { getAllAccounts, toAccountSnapshot } from "@/lib/accounts/snapshot";
 import { cascadeDeleteAccount, upsertAccountSnapshot } from "@/lib/supabase/queries";
 import { AnyAccount } from "@/types/accounts";
 import {
@@ -161,6 +161,7 @@ export async function POST(request: NextRequest) {
     const {
       tab,
       rowIndex,
+      accountId,
       newStatus,
       contactDate,
       nextSteps,
@@ -176,14 +177,25 @@ export async function POST(request: NextRequest) {
       expectedValues,
     } = body;
 
-    if (!tab || !rowIndex) {
+    // rowIndex 0 is valid for auto-inferred accounts (no sheet row yet).
+    if (!tab || (rowIndex == null && !accountId)) {
       return NextResponse.json(
-        { error: "tab and rowIndex are required" },
+        { error: "tab and rowIndex (or accountId) are required" },
         { status: 400 }
       );
     }
 
-    const { account, source } = await findAccountBySheetPosition(tab, rowIndex);
+    // If accountId is supplied, look up directly to avoid rowIndex=0 ambiguity
+    // when multiple auto-inferred accounts share the same tab.
+    let account: AnyAccount | null;
+    let source: "supabase" | "sheets";
+    if (accountId) {
+      const { data, source: src } = await getAccountsData();
+      account = getAllAccounts(data).find((a) => a.id === accountId) ?? null;
+      source = src;
+    } else {
+      ({ account, source } = await findAccountBySheetPosition(tab, rowIndex));
+    }
 
     if (expectedValues && typeof expectedValues === "object") {
       const currentValues: Record<string, string> = {};
@@ -236,7 +248,11 @@ export async function POST(request: NextRequest) {
       await upsertAccountSnapshot(toAccountSnapshot(applyAccountUpdates(account, updates)));
     }
 
-    await syncUpdateToSheets(tab, rowIndex, updates);
+    // Auto-inferred accounts have rowIndex=0 (no sheet row exists yet).
+    const sheetRowIndex = account?._rowIndex ?? rowIndex ?? 0;
+    if (sheetRowIndex > 0) {
+      await syncUpdateToSheets(tab, sheetRowIndex, updates);
+    }
 
     return NextResponse.json({ success: true });
   } catch (error) {

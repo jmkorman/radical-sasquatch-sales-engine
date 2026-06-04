@@ -118,6 +118,7 @@ export default function DashboardPage() {
       body: JSON.stringify({
         tab: inboxModalAccount._tab,
         rowIndex: inboxModalAccount._rowIndex,
+        accountId: inboxModalAccount.id,
         newStatus: outreachData.statusAfter,
         contactDate: todayISO(),
         nextSteps: outreachData.note,

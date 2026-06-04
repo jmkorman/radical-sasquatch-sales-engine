@@ -254,6 +254,7 @@ export function AccountDetail({ account, logs, reviewLogId = null, onReviewLogHa
             body: JSON.stringify({
               tab: account._tab,
               rowIndex: account._rowIndex,
+              accountId: account.id,
               accountName: detailDraft.accountName,
               contactName: detailDraft.contactName,
               type: detailDraft.type,
@@ -353,6 +354,7 @@ export function AccountDetail({ account, logs, reviewLogId = null, onReviewLogHa
         body: JSON.stringify({
           tab: account._tab,
           rowIndex: account._rowIndex,
+          accountId: account.id,
           [field]: value,
           expectedValues: {
             [field]: field === "nextSteps" ? savedNextSteps || "" : savedNotes || "",
@@ -454,6 +456,7 @@ export function AccountDetail({ account, logs, reviewLogId = null, onReviewLogHa
         body: JSON.stringify({
           tab: account._tab,
           rowIndex: account._rowIndex,
+          accountId: account.id,
           newStatus: data.statusAfter,
           contactDate: todayISO(),
           nextSteps: data.note,
@@ -707,6 +710,7 @@ export function AccountDetail({ account, logs, reviewLogId = null, onReviewLogHa
         body: JSON.stringify({
           tab: account._tab,
           rowIndex: account._rowIndex,
+          accountId: account.id,
           deleteRow: true,
         }),
       });
@@ -782,6 +786,7 @@ export function AccountDetail({ account, logs, reviewLogId = null, onReviewLogHa
         body: JSON.stringify({
           tab: account._tab,
           rowIndex: account._rowIndex,
+          accountId: account.id,
           order: `$${amount.toFixed(0)}`,
           expectedValues: { order: savedDetailDraft.order || "" },
         }),
@@ -877,6 +882,7 @@ export function AccountDetail({ account, logs, reviewLogId = null, onReviewLogHa
                         body: JSON.stringify({
                           tab: account._tab,
                           rowIndex: account._rowIndex,
+                          accountId: account.id,
                           newStatus,
                         }),
                       });

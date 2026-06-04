@@ -255,6 +255,7 @@ export async function GET() {
     const importedLogIds: string[] = [];
     const inferredAccounts: Array<{ name: string; tab: string; reason: string }> = [];
     const pendingReview: Array<{ name: string; tab: string; reason: string }> = [];
+    const skippedDetails: Array<{ subject: string; to: string }> = [];
 
     for (const message of messages) {
       if (!isSent(message)) continue;
@@ -357,6 +358,9 @@ export async function GET() {
         // Couldn't match and couldn't confidently infer. Log to error_logs
         // as a low-severity audit trail so Jake can see what's being missed.
         breakdown.skipped++;
+        if (skippedDetails.length < 25) {
+          skippedDetails.push({ subject: message.subject ?? "", to: message.to ?? "" });
+        }
         await logError(
           "gmail-poll/skipped-no-match",
           "Email matcher could not attribute message",
@@ -604,6 +608,7 @@ export async function GET() {
       importedLogIds,
       inferredAccounts,
       pendingReview,
+      skippedDetails,
       checked: allIds.length,
       accounts: liveAccounts.length,
       breakdown,

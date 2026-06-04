@@ -190,8 +190,11 @@ export function snapshotToAccount(snapshot: AccountSnapshot): AnyAccount {
 function dedupeSnapshotsByName(snapshots: AccountSnapshot[]): AccountSnapshot[] {
   const winners = new Map<string, AccountSnapshot>();
   for (const snapshot of snapshots) {
-    const key = normalizeAccountName(snapshot.account_name || "");
-    if (!key) continue;
+    // Key includes tab_slug so the same account name in different tabs is
+    // kept — e.g. "Denver Beer Co" legitimately exists in both Restaurants
+    // and Food Truck. Only true duplicates within the same tab are collapsed.
+    const key = `${snapshot.tab_slug ?? ""}:${normalizeAccountName(snapshot.account_name || "")}`;
+    if (!key || key === ":") continue;
     const existing = winners.get(key);
     if (!existing) {
       winners.set(key, snapshot);

@@ -26,6 +26,14 @@ import { parseAddr, isOwnerEmail, emailDomain, extractUrlDomain } from "@/lib/em
 const MIN_CONFIDENCE = 70;
 const LIVE_CONFIDENCE = 85;
 
+// The sender's own company. We must never auto-create a prospect for
+// ourselves — Jake's outbound emails pitch Radical Sasquatch to venues, and
+// the model sometimes latches onto the sender's company in the body/signature
+// instead of the recipient. Both the name and the sending domain are guarded.
+const OWNER_COMPANY = process.env.GMAIL_OWNER_COMPANY ?? "Radical Sasquatch";
+const OWNER_DOMAIN =
+  (process.env.GMAIL_OWNER_EMAIL ?? "jake@radicalsasquatch.com").split("@")[1]?.toLowerCase() ?? "";
+
 export interface InferAccountInput {
   message: GmailSentMessage;
   existingAccounts: AnyAccount[];
@@ -46,7 +54,9 @@ export interface InferredAccount {
   reason: string;
 }
 
-const SYSTEM = `You analyze a B2B sales email to infer the recipient company and which CRM bucket it belongs in.
+const SYSTEM = `You analyze a B2B sales email to infer the RECIPIENT company and which CRM bucket it belongs in.
+
+IMPORTANT: The email is sent BY ${process.env.GMAIL_OWNER_COMPANY ?? "Radical Sasquatch"} (a dumpling company) to a prospect. NEVER return the sender's own company — identify the company being pitched TO (the recipient). If you can only identify the sender, or the recipient is internal/personal, return confidence 0.
 
 CRM tabs:
 - "Restaurants" — restaurants, bars, eateries, food halls
@@ -77,6 +87,8 @@ async function inferAccount(input: InferAccountInput): Promise<InferredAccount |
   if (!recipient.email || isOwnerEmail(recipient.email)) return null;
 
   const domain = emailDomain(recipient.email);
+  // Emailing anyone on our own domain (team/self) is never a prospect.
+  if (OWNER_DOMAIN && domain === OWNER_DOMAIN) return null;
 
   // Send the model a compact, deduped list of existing account names so it
   // can avoid recreating an account that already exists (e.g. spelled
@@ -109,8 +121,15 @@ ${existingNames.join(", ")}`;
   if (!result.companyName?.trim()) return null;
   if (!result.tab) return null;
 
-  // Don't recreate an existing account, even if the model didn't notice.
+  // Hard guard: never create an account for our own company, even if the
+  // model returned the sender instead of the recipient.
   const requestedNorm = normalizeAccountName(result.companyName);
+  const ownerNorm = normalizeAccountName(OWNER_COMPANY);
+  if (ownerNorm && (requestedNorm === ownerNorm || requestedNorm.startsWith(`${ownerNorm}-`))) {
+    return null;
+  }
+
+  // Don't recreate an existing account, even if the model didn't notice.
   const dupe = input.existingAccounts.find(
     (a) => normalizeAccountName(a.account ?? "") === requestedNorm
   );

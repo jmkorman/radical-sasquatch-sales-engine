@@ -159,6 +159,7 @@ export function HitList({ items: _items }: { items: HitListItem[] }) {
       body: JSON.stringify({
         tab: modalAccount._tab,
         rowIndex: modalAccount._rowIndex,
+        accountId: modalAccount.id,
         newStatus: data.statusAfter,
         contactDate: todayISO(),
         nextSteps: data.note,

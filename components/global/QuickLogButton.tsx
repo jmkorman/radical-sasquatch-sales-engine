@@ -184,6 +184,7 @@ export function QuickLogButton() {
       body: JSON.stringify({
         tab: selectedAccount._tab,
         rowIndex: selectedAccount._rowIndex,
+        accountId: selectedAccount.id,
         newStatus: outreachData.statusAfter,
         contactDate: todayISO(),
         nextSteps: outreachData.note,

@@ -185,6 +185,7 @@ function ActiveAccountsPageContent() {
         body: JSON.stringify({
           tab: "Active Accounts",
           rowIndex: account._rowIndex,
+          accountId: account.id,
           deleteRow: true,
           expectedValues: { accountName: account.account },
         }),
@@ -282,6 +283,7 @@ function ActiveAccountsPageContent() {
         body: JSON.stringify({
           tab: account._tab,
           rowIndex: account._rowIndex,
+          accountId: account.id,
           newStatus: data.statusAfter,
           contactDate: todayISO(),
           nextSteps: data.note,
