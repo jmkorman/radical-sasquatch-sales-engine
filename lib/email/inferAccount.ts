@@ -58,15 +58,32 @@ const SYSTEM = `You analyze a B2B sales email to infer the RECIPIENT company and
 
 IMPORTANT: The email is sent BY ${process.env.GMAIL_OWNER_COMPANY ?? "Radical Sasquatch"} (a dumpling company) to a prospect. NEVER return the sender's own company — identify the company being pitched TO (the recipient). If you can only identify the sender, or the recipient is internal/personal, return confidence 0.
 
-CRM tabs:
-- "Restaurants" — restaurants, bars, eateries, food halls
-- "Retail" — grocery stores, specialty markets, convenience, retail shops
-- "Catering" — caterers, event venues, corporate catering, hotels
-- "Food Truck" — food trucks, mobile vendors, pop-ups
+CRM tabs — read these carefully, they are easy to confuse:
+
+- "Restaurants" — dine-in or counter-service food businesses: restaurants, bars, cafes, eateries, food halls, breweries with kitchen
+
+- "Retail" — physical STORES that sell food products directly to consumers on shelves: grocery stores, supermarkets, specialty food shops, delis, convenience stores, co-ops, food markets where customers browse and buy packaged goods
+
+- "Catering" — businesses or VENUES where food is served at events or gatherings. This includes:
+  • Catering companies and caterers
+  • Event venues: wedding venues, banquet halls, retreat centers, conference centers
+  • Hotels and resorts (food service)
+  • Museums, cultural centers, performing arts venues
+  • Sports facilities: arenas, stadiums, sports parks, recreation centers
+  • Corporate campuses, country clubs, golf courses
+  • Any venue that hosts events with food service
+  NOTE: A "retreat center", "resort", "sports park", "museum", or "event center" is CATERING, NOT Retail.
+
+- "Food Truck" — mobile food vendors: food trucks, pop-up food stalls, mobile vendors, food carts
+
+CRITICAL DISTINCTION — Retail vs Catering:
+  Retail = a STORE where food is sold on shelves (think: grocery aisle, checkout counter)
+  Catering = a VENUE or SERVICE where food is served at events or provided to groups
+  When in doubt between Retail and Catering for a venue/facility/center, choose Catering.
 
 Return JSON only:
 {
-  "companyName": string,    // canonical company name (e.g. "Solterra Catering")
+  "companyName": string,    // canonical company name (e.g. "Solterra Retreat")
   "tab": "Restaurants" | "Retail" | "Catering" | "Food Truck",
   "location": string,        // city/state if obvious in subject/body/signature, else ""
   "contactName": string,     // recipient's name, else ""

@@ -159,6 +159,22 @@ export function CommandTable({
   const rowPad =
     tweaks.density === "compact" ? "8px 14px" : tweaks.density === "roomy" ? "18px 16px" : "12px 16px";
 
+  const handleMoveTab = async (account: AnyAccount, newTab: string) => {
+    if (newTab === account._tab) return;
+    const res = await fetch("/api/accounts/retab", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ accountId: account.id, newTab }),
+    });
+    if (!res.ok) {
+      showActionFeedback("Couldn't move to that tab.", "error");
+      return;
+    }
+    setSelected(null);
+    await fetchAllTabs();
+    showActionFeedback("Account moved to " + newTab + ".", "success");
+  };
+
   const handleStatusChange = async (account: AnyAccount, newStatus: string) => {
     const previousStatus = account.status;
     const response = await fetch("/api/sheets/update", {
@@ -529,6 +545,7 @@ export function CommandTable({
           onClose={() => setSelected(null)}
           onLogOutreach={() => setModalAccount(selected)}
           onStatusChange={handleStatusChange}
+          onMoveTab={handleMoveTab}
         />
       )}
 
@@ -880,12 +897,14 @@ function SidePanel({
   onClose,
   onLogOutreach,
   onStatusChange,
+  onMoveTab,
 }: {
   account: AnyAccount;
   serverLogs: ActivityLog[];
   onClose: () => void;
   onLogOutreach: () => void;
   onStatusChange: (account: AnyAccount, newStatus: string) => void;
+  onMoveTab: (account: AnyAccount, newTab: string) => void;
 }) {
   const touch = formatContactPipeline(getResolvedLastContactDate(account, serverLogs));
   const temp = tempLabelPipeline(touch.days);
@@ -1069,6 +1088,47 @@ function SidePanel({
             ))}
           </select>
         </div>
+
+        {/* Tab correction — only for auto-inferred (rowIndex=0) accounts */}
+        {account._rowIndex === 0 && (
+          <div style={{ marginBottom: 18 }}>
+            <div
+              style={{
+                fontSize: 10,
+                letterSpacing: "0.34em",
+                color: "#8c7fbd",
+                textTransform: "uppercase",
+                fontWeight: 700,
+                marginBottom: 6,
+              }}
+            >
+              Tab
+            </div>
+            <select
+              value={account._tab}
+              onChange={(e) => onMoveTab(account, e.target.value)}
+              style={{
+                width: "100%",
+                padding: "8px 12px",
+                borderRadius: 8,
+                border: "1px solid rgba(73,48,140,0.5)",
+                background: "rgba(73,48,140,0.15)",
+                color: "#bcaef0",
+                fontSize: 12,
+                fontWeight: 600,
+                fontFamily: "'Space Grotesk', sans-serif",
+                cursor: "pointer",
+                appearance: "none",
+              }}
+            >
+              {(["Restaurants", "Retail", "Catering", "Food Truck"] as const).map((t) => (
+                <option key={t} value={t} style={{ background: "#100726", color: "#fff4e8" }}>
+                  {t}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         {/* Account facts */}
         <div
