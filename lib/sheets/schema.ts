@@ -218,3 +218,189 @@ export function getContactNameColumnIndex(tab: string): number {
     default: throw new Error(`Unknown tab: ${tab}`);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Header-row validation (Risk 4 in ENGINE_AUDIT.md).
+//
+// All column maps above are hardcoded zero-based offsets. If anyone inserts,
+// deletes, or renames a column in the live Google Sheet, every read and
+// every write that uses the wrong offset will silently corrupt data with no
+// error surfaced to the user.
+//
+// The validator below checks that the live header row's text at each mapped
+// column index loosely contains the expected label. This is a loose substring
+// match (case-insensitive, punctuation-normalized) so harmless rewordings
+// like "Account Name" vs "Account" or "Phone #" vs "Phone" still pass — but
+// a structural insertion/deletion that shifts column positions fails loudly.
+//
+// Set SHEET_HEADER_VALIDATION="off" in env to bypass this guard if the
+// expected labels need to be updated and you can't deploy a code change.
+// ---------------------------------------------------------------------------
+
+export type ExpectedHeaderMap = Record<number, string>;
+
+// Each entry: { column index => substring the live header at that index
+// must contain (after normalization) }. Keep these conservative — they only
+// need to disambiguate the column from its neighbours.
+export const RESTAURANTS_HEADERS: ExpectedHeaderMap = {
+  [RESTAURANTS_COLUMNS.ACCOUNT]: "account",
+  [RESTAURANTS_COLUMNS.TYPE]: "type",
+  [RESTAURANTS_COLUMNS.LOCATION]: "location",
+  [RESTAURANTS_COLUMNS.IG]: "ig",
+  [RESTAURANTS_COLUMNS.WEBSITE]: "website",
+  [RESTAURANTS_COLUMNS.KITCHEN]: "kitchen",
+  [RESTAURANTS_COLUMNS.DUMPLINGS]: "dumpling",
+  [RESTAURANTS_COLUMNS.STATUS]: "status",
+  [RESTAURANTS_COLUMNS.NEXT_STEPS]: "next",
+  [RESTAURANTS_COLUMNS.CONTACT_DATE]: "contact",
+  [RESTAURANTS_COLUMNS.CONTACT_NAME]: "contact",
+  [RESTAURANTS_COLUMNS.PHONE]: "phone",
+  [RESTAURANTS_COLUMNS.EMAIL]: "email",
+  [RESTAURANTS_COLUMNS.EST_MONTHLY_ORDER]: "monthly",
+  [RESTAURANTS_COLUMNS.COMMISSION_PCT]: "commission",
+  [RESTAURANTS_COLUMNS.NOTES]: "notes",
+};
+
+export const RETAIL_HEADERS: ExpectedHeaderMap = {
+  [RETAIL_COLUMNS.ACCOUNT]: "account",
+  [RETAIL_COLUMNS.TYPE]: "type",
+  [RETAIL_COLUMNS.LOCATION]: "location",
+  [RETAIL_COLUMNS.IG]: "ig",
+  [RETAIL_COLUMNS.WEBSITE]: "website",
+  [RETAIL_COLUMNS.STATUS]: "status",
+  [RETAIL_COLUMNS.NEXT_STEPS]: "next",
+  [RETAIL_COLUMNS.CONTACT_DATE]: "contact",
+  [RETAIL_COLUMNS.BUYER]: "buyer",
+  [RETAIL_COLUMNS.PHONE]: "phone",
+  [RETAIL_COLUMNS.EMAIL]: "email",
+  [RETAIL_COLUMNS.EST_MONTHLY_ORDER]: "monthly",
+  [RETAIL_COLUMNS.COMMISSION_PCT]: "commission",
+  [RETAIL_COLUMNS.NOTES]: "notes",
+};
+
+export const CATERING_HEADERS: ExpectedHeaderMap = {
+  [CATERING_COLUMNS.ACCOUNT]: "account",
+  [CATERING_COLUMNS.TYPE]: "type",
+  [CATERING_COLUMNS.LOCATION]: "location",
+  [CATERING_COLUMNS.WEBSITE]: "website",
+  [CATERING_COLUMNS.STATUS]: "status",
+  [CATERING_COLUMNS.NEXT_STEPS]: "next",
+  [CATERING_COLUMNS.CONTACT_DATE]: "contact",
+  [CATERING_COLUMNS.CONTACT_NAME]: "contact",
+  [CATERING_COLUMNS.PHONE]: "phone",
+  [CATERING_COLUMNS.EMAIL]: "email",
+  [CATERING_COLUMNS.EST_MONTHLY_ORDER]: "monthly",
+  [CATERING_COLUMNS.COMMISSION_PCT]: "commission",
+  [CATERING_COLUMNS.NOTES]: "notes",
+  [CATERING_COLUMNS.IG]: "ig",
+};
+
+export const FOOD_TRUCK_HEADERS: ExpectedHeaderMap = {
+  [FOOD_TRUCK_COLUMNS.ACCOUNT]: "account",
+  [FOOD_TRUCK_COLUMNS.TYPE]: "type",
+  [FOOD_TRUCK_COLUMNS.LOCATION]: "location",
+  [FOOD_TRUCK_COLUMNS.WEBSITE]: "website",
+  [FOOD_TRUCK_COLUMNS.STATUS]: "status",
+  [FOOD_TRUCK_COLUMNS.NEXT_STEPS]: "next",
+  [FOOD_TRUCK_COLUMNS.CONTACT_DATE]: "contact",
+  [FOOD_TRUCK_COLUMNS.CLIENT]: "client",
+  [FOOD_TRUCK_COLUMNS.PHONE]: "phone",
+  [FOOD_TRUCK_COLUMNS.EMAIL]: "email",
+  [FOOD_TRUCK_COLUMNS.EST_MONTHLY_ORDER]: "monthly",
+  [FOOD_TRUCK_COLUMNS.COMMISSION_PCT]: "commission",
+  [FOOD_TRUCK_COLUMNS.NOTES]: "notes",
+  [FOOD_TRUCK_COLUMNS.IG]: "ig",
+};
+
+export const ACTIVE_ACCOUNTS_HEADERS: ExpectedHeaderMap = {
+  [ACTIVE_ACCOUNTS_COLUMNS.ACCOUNT]: "account",
+  [ACTIVE_ACCOUNTS_COLUMNS.TYPE]: "type",
+  [ACTIVE_ACCOUNTS_COLUMNS.CONTACT_NAME]: "contact",
+  [ACTIVE_ACCOUNTS_COLUMNS.STATUS]: "status",
+  [ACTIVE_ACCOUNTS_COLUMNS.RS_LEAD]: "lead",
+  [ACTIVE_ACCOUNTS_COLUMNS.CONTACT_DATE]: "contact",
+  [ACTIVE_ACCOUNTS_COLUMNS.NEXT_STEPS]: "next",
+  [ACTIVE_ACCOUNTS_COLUMNS.PHONE]: "phone",
+  [ACTIVE_ACCOUNTS_COLUMNS.EMAIL]: "email",
+  [ACTIVE_ACCOUNTS_COLUMNS.ORDER]: "order",
+  [ACTIVE_ACCOUNTS_COLUMNS.NOTES]: "notes",
+};
+
+export function getExpectedHeaders(tab: string): ExpectedHeaderMap | null {
+  switch (tab) {
+    case "Restaurants": return RESTAURANTS_HEADERS;
+    case "Retail": return RETAIL_HEADERS;
+    case "Catering": return CATERING_HEADERS;
+    case "Food Truck": return FOOD_TRUCK_HEADERS;
+    case "Active Accounts": return ACTIVE_ACCOUNTS_HEADERS;
+    default: return null;
+  }
+}
+
+export function normalizeHeaderText(value: unknown): string {
+  return String(value ?? "")
+    .toLowerCase()
+    .replace(/[._\-/]/g, " ")
+    .replace(/[^a-z0-9 %]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export class SheetHeaderMismatchError extends Error {
+  constructor(
+    public readonly tab: string,
+    public readonly errors: string[]
+  ) {
+    super(
+      `Google Sheet "${tab}" header row does not match expected schema. ` +
+        `A column may have been inserted, removed, or renamed. ` +
+        `Fix the sheet or update lib/sheets/schema.ts. ` +
+        `Set SHEET_HEADER_VALIDATION=off to bypass.\n  - ${errors.join("\n  - ")}`
+    );
+    this.name = "SheetHeaderMismatchError";
+  }
+}
+
+export interface HeaderValidationResult {
+  ok: boolean;
+  errors: string[];
+}
+
+export function validateHeaderRow(
+  tab: string,
+  headerRow: ReadonlyArray<unknown>
+): HeaderValidationResult {
+  const expected = getExpectedHeaders(tab);
+  if (!expected) return { ok: true, errors: [] };
+
+  const errors: string[] = [];
+  if (!headerRow || headerRow.length === 0) {
+    return {
+      ok: false,
+      errors: [`Header row is missing or empty for tab "${tab}".`],
+    };
+  }
+
+  for (const [idxStr, want] of Object.entries(expected)) {
+    const idx = Number(idxStr);
+    const raw = headerRow[idx];
+    const actual = normalizeHeaderText(raw);
+    const expectedToken = normalizeHeaderText(want);
+    if (!actual || !actual.includes(expectedToken)) {
+      errors.push(
+        `Column ${idx} should contain "${want}" but found "${raw ?? ""}"`
+      );
+    }
+  }
+
+  return { ok: errors.length === 0, errors };
+}
+
+export function assertHeaderRow(tab: string, headerRow: ReadonlyArray<unknown>): void {
+  const result = validateHeaderRow(tab, headerRow);
+  if (!result.ok) throw new SheetHeaderMismatchError(tab, result.errors);
+}
+
+export function headerValidationEnabled(): boolean {
+  return (process.env.SHEET_HEADER_VALIDATION ?? "").toLowerCase() !== "off";
+}

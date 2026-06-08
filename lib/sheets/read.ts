@@ -5,6 +5,8 @@ import {
   CATERING_COLUMNS,
   FOOD_TRUCK_COLUMNS,
   ACTIVE_ACCOUNTS_COLUMNS,
+  assertHeaderRow,
+  headerValidationEnabled,
 } from "./schema";
 import {
   RestaurantAccount,
@@ -190,7 +192,14 @@ async function getTabRaw(tabName: string): Promise<string[][]> {
     spreadsheetId: getSheetId(),
     range: `'${tabName}'!A:Z`,
   });
-  return (response.data.values as string[][]) ?? [];
+  const rows = (response.data.values as string[][]) ?? [];
+  // Risk 4 (ENGINE_AUDIT.md): bail loudly if the header row shifted out from
+  // under our hardcoded column index maps. Set SHEET_HEADER_VALIDATION=off to
+  // bypass in an emergency.
+  if (headerValidationEnabled() && rows.length > 0) {
+    assertHeaderRow(tabName, rows[0]);
+  }
+  return rows;
 }
 
 export async function getRestaurants(): Promise<RestaurantAccount[]> {
