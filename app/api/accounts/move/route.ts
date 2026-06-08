@@ -210,6 +210,13 @@ export async function POST(request: NextRequest) {
       .update(childUpdates)
       .eq("account_id", account.id)
       .then(() => undefined, (err) => logError("accounts/move/orders", err, { fromId: account.id }));
+    // Events follow the same FK-by-string pattern as orders; without this
+    // migration, events would be orphaned when their account moves tabs.
+    await supabase
+      .from("events")
+      .update(childUpdates)
+      .eq("account_id", account.id)
+      .then(() => undefined, (err) => logError("accounts/move/events", err, { fromId: account.id }));
     await supabase
       .from("activity_logs")
       .update(childUpdates)

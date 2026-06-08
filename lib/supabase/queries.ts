@@ -126,6 +126,16 @@ export async function cascadeDeleteAccount(accountId: string): Promise<void> {
       if (!isMissingRelation(err)) console.error("cascadeDeleteAccount orders:", err);
     });
 
+  // Hard-delete events for the same reason as orders — they carry revenue
+  // and orphaned bookings would inflate forecast/commission totals.
+  await supabase
+    .from("events")
+    .delete()
+    .eq("account_id", accountId)
+    .then(() => undefined, (err) => {
+      if (!isMissingRelation(err)) console.error("cascadeDeleteAccount events:", err);
+    });
+
   // Soft-delete activity logs to keep audit trail recoverable.
   await supabase
     .from("activity_logs")

@@ -83,6 +83,13 @@ export async function POST(request: NextRequest) {
       .then(() => undefined, (err) =>
         logError("accounts/retab/orders", err, { fromId: accountId })
       );
+    await supabase
+      .from("events")
+      .update(childUpdates)
+      .eq("account_id", accountId)
+      .then(() => undefined, (err) =>
+        logError("accounts/retab/events", err, { fromId: accountId })
+      );
 
     // Delete the old snapshot.
     await deleteAccountSnapshot(accountId).catch((err) =>

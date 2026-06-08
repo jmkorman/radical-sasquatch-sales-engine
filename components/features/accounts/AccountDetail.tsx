@@ -7,6 +7,7 @@ import { appendGmailMarkers, extractGmailMarkers } from "@/lib/activity/gmailMar
 import { AnyAccount } from "@/types/accounts";
 import { ActivityLog } from "@/types/activity";
 import { OrderRecord } from "@/types/orders";
+import { EventRecord } from "@/types/events";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -17,6 +18,8 @@ import { ActivityLogList } from "./ActivityLog";
 import { QuickActions } from "./QuickActions";
 import { LogOutreachModal } from "@/components/features/dashboard/LogOutreachModal";
 import { OrderModal, OrderFormData } from "@/components/features/orders/OrderModal";
+import { EventModal, EventFormData } from "@/components/features/events/EventModal";
+import { sortEventsByUpcoming } from "@/lib/events/helpers";
 import { encodeOrderDetails, summarizeLineItems, parseOrderDetails } from "@/lib/orders/lineItems";
 import { todayISO, formatDate, formatDateShort } from "@/lib/utils/dates";
 import { formatActivityNote, parseActivityNote } from "@/lib/activity/notes";
@@ -137,6 +140,10 @@ export function AccountDetail({ account, logs, reviewLogId = null, onReviewLogHa
   const [updatingFollowUpId, setUpdatingFollowUpId] = useState<string | null>(null);
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [loadingOrders, setLoadingOrders] = useState(true);
+  const [events, setEvents] = useState<EventRecord[]>([]);
+  const [loadingEvents, setLoadingEvents] = useState(true);
+  const [showEventModal, setShowEventModal] = useState(false);
+  const [editingEvent, setEditingEvent] = useState<EventRecord | null>(null);
   const [gmailThreads, setGmailThreads] = useState<GmailThread[]>([]);
   const [gmailConfigured, setGmailConfigured] = useState<boolean | null>(null);
   const [loadingGmail, setLoadingGmail] = useState(false);
@@ -167,6 +174,28 @@ export function AccountDetail({ account, logs, reviewLogId = null, onReviewLogHa
 
     loadOrders();
   }, [accountId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadEvents() {
+      try {
+        const response = await fetch(
+          `/api/events?accountId=${encodeURIComponent(accountId)}&accountName=${encodeURIComponent(account.account)}`
+        );
+        if (!response.ok) throw new Error("Failed to load events");
+        const data: EventRecord[] = await response.json();
+        if (!cancelled) setEvents(sortEventsByUpcoming(data));
+      } catch {
+        if (!cancelled) setEvents([]);
+      } finally {
+        if (!cancelled) setLoadingEvents(false);
+      }
+    }
+    loadEvents();
+    return () => {
+      cancelled = true;
+    };
+  }, [accountId, account.account]);
 
   useEffect(() => {
     const email = detailDraft.email.trim();
@@ -799,6 +828,72 @@ export function AccountDetail({ account, logs, reviewLogId = null, onReviewLogHa
     showActionFeedback(isEdit ? "Order updated." : "Order logged.", "success");
   };
 
+  const handleSaveEvent = async (data: EventFormData) => {
+    const isEdit = Boolean(editingEvent);
+    const payload = {
+      account_id: accountId,
+      account_name: account.account,
+      tab: account._tabSlug,
+      row_index: account._rowIndex,
+      title: data.title,
+      event_date: data.event_date,
+      event_end_date: data.event_end_date || null,
+      location: data.location || null,
+      status: data.status,
+      quoted_amount: Number.isFinite(data.quoted_amount) ? data.quoted_amount : 0,
+      actual_amount:
+        data.actual_amount != null && Number.isFinite(data.actual_amount)
+          ? data.actual_amount
+          : null,
+      deposit: Number.isFinite(data.deposit) ? data.deposit : 0,
+      deposit_paid: data.deposit_paid,
+      contact_name: data.contact_name || account.contactName || null,
+      phone: data.phone || account.phone || null,
+      email: data.email || account.email || null,
+      notes: data.notes || null,
+    };
+
+    const response = isEdit
+      ? await fetch("/api/events", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: editingEvent!.id, ...payload }),
+        })
+      : await fetch("/api/events", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error((body as { error?: string }).error || "Save failed");
+    }
+
+    const saved: EventRecord = await response.json();
+    setEvents((existing) =>
+      sortEventsByUpcoming(
+        isEdit
+          ? existing.map((e) => (e.id === saved.id ? saved : e))
+          : [saved, ...existing]
+      )
+    );
+
+    showActionFeedback(isEdit ? "Event updated." : "Event added.", "success");
+  };
+
+  const handleDeleteEvent = async (eventId: string) => {
+    const response = await fetch(`/api/events?id=${encodeURIComponent(eventId)}`, {
+      method: "DELETE",
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error((body as { error?: string }).error || "Delete failed");
+    }
+    setEvents((existing) => existing.filter((e) => e.id !== eventId));
+    showActionFeedback("Event deleted.", "success");
+  };
+
   const handleToggleHitList = async () => {
     if (savingHitList) return;
 
@@ -1333,6 +1428,101 @@ export function AccountDetail({ account, logs, reviewLogId = null, onReviewLogHa
 
           <Card>
             <div className="space-y-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-[11px] uppercase tracking-[0.3em] text-[#af9fe6]">Events</div>
+                  <div className="mt-1 text-sm text-[#d8ccfb]">
+                    Dated bookings (caterings, pop-ups, festivals). Each event tracks its own status, quote, deposit, and commission. Click to edit.
+                  </div>
+                </div>
+                <Button
+                  onClick={() => {
+                    setEditingEvent(null);
+                    setShowEventModal(true);
+                  }}
+                >
+                  + Add Event
+                </Button>
+              </div>
+
+              {loadingEvents ? (
+                <div className="text-sm text-[#af9fe6]">Loading events...</div>
+              ) : events.length === 0 ? (
+                <div className="rounded-xl border border-rs-border/60 bg-black/10 px-3 py-3 text-sm text-[#d8ccfb]">
+                  No events booked yet.
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {events.map((event) => {
+                    const basis =
+                      event.actual_amount != null && event.actual_amount > 0
+                        ? event.actual_amount
+                        : event.quoted_amount;
+                    const amountLabel =
+                      basis > 0
+                        ? `$${basis.toLocaleString("en-US", { maximumFractionDigits: 0 })}`
+                        : null;
+                    return (
+                      <button
+                        type="button"
+                        key={event.id}
+                        onClick={() => {
+                          setEditingEvent(event);
+                          setShowEventModal(true);
+                        }}
+                        className="w-full rounded-xl border border-rs-border/60 bg-black/10 px-3 py-3 text-left text-sm transition-colors hover:border-rs-gold/50 hover:bg-white/5"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="font-semibold text-rs-cream">
+                            {event.title || "Untitled event"}
+                          </div>
+                          <div className="flex items-center gap-3 text-xs">
+                            {amountLabel && (
+                              <span className="font-bold text-rs-gold">{amountLabel}</span>
+                            )}
+                            <span className="text-[#af9fe6]">{formatDate(event.event_date)}</span>
+                          </div>
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                          <span className="rounded-full border border-rs-border/60 px-2 py-0.5 text-[#d8ccfb]">
+                            {event.status}
+                          </span>
+                          {event.location && (
+                            <span className="rounded-full border border-rs-border/60 px-2 py-0.5 text-[#d8ccfb]">
+                              {event.location}
+                            </span>
+                          )}
+                          {event.deposit > 0 && (
+                            <span
+                              className={`rounded-full border px-2 py-0.5 ${
+                                event.deposit_paid
+                                  ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-100"
+                                  : "border-rs-border/60 text-[#d8ccfb]"
+                              }`}
+                            >
+                              Deposit ${event.deposit.toLocaleString("en-US", { maximumFractionDigits: 0 })}
+                              {event.deposit_paid ? " ✓" : ""}
+                            </span>
+                          )}
+                          {event.commission > 0 && (
+                            <span className="rounded-full border border-rs-border/60 px-2 py-0.5 text-rs-gold">
+                              ${event.commission.toLocaleString("en-US", { maximumFractionDigits: 0 })} comm.
+                            </span>
+                          )}
+                        </div>
+                        {event.notes && (
+                          <div className="mt-2 text-xs text-[#af9fe6]">{event.notes}</div>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </Card>
+
+          <Card>
+            <div className="space-y-3">
               <div>
                 <div className="text-sm font-semibold text-rs-cream">Add Internal Note</div>
                 <p className="mt-1 text-sm text-[#d8ccfb]">
@@ -1423,6 +1613,25 @@ export function AccountDetail({ account, logs, reviewLogId = null, onReviewLogHa
             if (!res.ok) throw new Error("Delete failed");
             setOrders((existing) => existing.filter((o) => o.id !== orderId));
           }}
+        />
+      )}
+
+      {showEventModal && (
+        <EventModal
+          accountName={account.account}
+          initialEvent={editingEvent}
+          defaults={{
+            location: "location" in account ? account.location || "" : "",
+            contact_name: account.contactName || "",
+            phone: account.phone || "",
+            email: account.email || "",
+          }}
+          onClose={() => {
+            setShowEventModal(false);
+            setEditingEvent(null);
+          }}
+          onSubmit={handleSaveEvent}
+          onDelete={editingEvent ? handleDeleteEvent : undefined}
         />
       )}
 
