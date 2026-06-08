@@ -92,6 +92,51 @@ function toOptionalNumber(value: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+// Additive validation helpers — applied after the existing required-field
+// check so we can return a clean 400 with a useful message instead of
+// silently writing junk (NaN money, oversized notes, malformed dates).
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const MAX_STRING_LEN = 5_000;
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function badRequest(message: string): NextResponse {
+  return NextResponse.json({ error: message }, { status: 400 });
+}
+
+function validateEventPayload(body: unknown): NextResponse | null {
+  if (!isPlainObject(body)) return badRequest("Request body must be an object");
+  const obj = body as Record<string, unknown>;
+
+  const eventDate = obj.event_date;
+  if (typeof eventDate === "string" && eventDate.length > 0 && !ISO_DATE_RE.test(eventDate)) {
+    return badRequest("event_date must be in YYYY-MM-DD format");
+  }
+  const eventEnd = obj.event_end_date;
+  if (typeof eventEnd === "string" && eventEnd.length > 0 && !ISO_DATE_RE.test(eventEnd)) {
+    return badRequest("event_end_date must be in YYYY-MM-DD format");
+  }
+
+  for (const field of ["quoted_amount", "actual_amount", "deposit"] as const) {
+    const raw = obj[field];
+    if (raw === null || raw === undefined || raw === "") continue;
+    const n = typeof raw === "number" ? raw : parseFloat(String(raw));
+    if (!Number.isFinite(n)) return badRequest(`${field} must be a number`);
+    if (n < 0) return badRequest(`${field} must be non-negative`);
+  }
+
+  for (const field of ["title", "notes", "location", "contact_name", "phone", "email"] as const) {
+    const v = obj[field];
+    if (typeof v === "string" && v.length > MAX_STRING_LEN) {
+      return badRequest(`${field} exceeds maximum length of ${MAX_STRING_LEN}`);
+    }
+  }
+
+  return null;
+}
+
 export async function GET(request: NextRequest) {
   if (!supabaseConfigured()) return configError();
 
@@ -109,19 +154,31 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   if (!supabaseConfigured()) return configError();
 
+  let body: unknown;
   try {
-    const body = await request.json();
-    if (!body?.account_id || !body?.account_name || !body?.event_date) {
+    body = await request.json();
+  } catch {
+    return badRequest("Invalid JSON body");
+  }
+
+  try {
+    if (!isPlainObject(body) || !body.account_id || !body.account_name || !body.event_date) {
       return NextResponse.json(
         { error: "account_id, account_name, and event_date are required" },
         { status: 400 }
       );
     }
+    const invalid = validateEventPayload(body);
+    if (invalid) return invalid;
 
-    const status = coerceStatus(body.status);
-    const quoted = toNumber(body.quoted_amount);
-    const actual = toOptionalNumber(body.actual_amount);
-    const deposit = toNumber(body.deposit);
+    // Validation passed — re-bind to a permissive type so the existing
+    // shaping code (which trusted `await request.json()` to be `any`) keeps
+    // working without a structural rewrite.
+    const b = body as Record<string, any>;
+    const status = coerceStatus(b.status);
+    const quoted = toNumber(b.quoted_amount);
+    const actual = toOptionalNumber(b.actual_amount);
+    const deposit = toNumber(b.deposit);
     const commission = calculateEventCommission({
       quoted_amount: quoted,
       actual_amount: actual,
@@ -129,25 +186,25 @@ export async function POST(request: NextRequest) {
     });
 
     const payload = {
-      account_id: String(body.account_id),
-      account_name: String(body.account_name),
-      tab: body.tab ?? null,
-      tab_slug: body.tab_slug ?? null,
-      row_index: typeof body.row_index === "number" ? body.row_index : null,
-      title: body.title?.trim() ? String(body.title) : "Untitled event",
-      event_date: String(body.event_date),
-      event_end_date: body.event_end_date || null,
-      location: body.location ?? null,
+      account_id: String(b.account_id),
+      account_name: String(b.account_name),
+      tab: b.tab ?? null,
+      tab_slug: b.tab_slug ?? null,
+      row_index: typeof b.row_index === "number" ? b.row_index : null,
+      title: b.title?.trim() ? String(b.title) : "Untitled event",
+      event_date: String(b.event_date),
+      event_end_date: b.event_end_date || null,
+      location: b.location ?? null,
       status,
       quoted_amount: quoted,
       actual_amount: actual,
       deposit,
-      deposit_paid: Boolean(body.deposit_paid),
+      deposit_paid: Boolean(b.deposit_paid),
       commission,
-      contact_name: body.contact_name ?? null,
-      phone: body.phone ?? null,
-      email: body.email ?? null,
-      notes: body.notes ?? null,
+      contact_name: b.contact_name ?? null,
+      phone: b.phone ?? null,
+      email: b.email ?? null,
+      notes: b.notes ?? null,
     };
 
     const inserted = await insertEvent(payload);
@@ -163,11 +220,26 @@ export async function POST(request: NextRequest) {
 export async function PATCH(request: NextRequest) {
   if (!supabaseConfigured()) return configError();
 
+  let body: unknown;
   try {
-    const body = await request.json();
-    const id = body.id as string | undefined;
+    body = await request.json();
+  } catch {
+    return badRequest("Invalid JSON body");
+  }
+
+  try {
+    if (!isPlainObject(body)) return badRequest("Request body must be an object");
+    const id = typeof body.id === "string" ? body.id : undefined;
     if (!id) {
       return NextResponse.json({ error: "id is required" }, { status: 400 });
+    }
+    if (body.updates !== undefined && !isPlainObject(body.updates)) {
+      return badRequest("updates must be an object");
+    }
+    // Validate amount/date/length constraints on the updates payload too.
+    if (body.updates) {
+      const invalid = validateEventPayload(body.updates);
+      if (invalid) return invalid;
     }
     const incoming = (body.updates ?? {}) as Partial<EventRecord>;
 
