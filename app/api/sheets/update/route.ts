@@ -2,7 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { deleteRow, getCellValue, updateCell } from "@/lib/sheets/write";
 import { findAccountBySheetPosition, getAccountsData } from "@/lib/accounts/source";
 import { getAllAccounts, toAccountSnapshot } from "@/lib/accounts/snapshot";
-import { cascadeDeleteAccount, upsertAccountSnapshot } from "@/lib/supabase/queries";
+import {
+  cascadeDeleteAccount,
+  deleteAccountSnapshot,
+  upsertAccountSnapshot,
+} from "@/lib/supabase/queries";
+import { buildStableAccountId } from "@/lib/accounts/identity";
+import { createServerClient } from "@/lib/supabase/server";
+import { logError } from "@/lib/errors/log";
 import { AnyAccount } from "@/types/accounts";
 import {
   getAccountColumnIndex,
@@ -245,7 +252,62 @@ export async function POST(request: NextRequest) {
     };
 
     if (account) {
-      await upsertAccountSnapshot(toAccountSnapshot(applyAccountUpdates(account, updates)));
+      const nextAccount = applyAccountUpdates(account, updates);
+
+      // Account IDs are derived as `${tabSlug}:${normalizedName}`, so a name
+      // change produces a new stable id. Without explicit migration, the
+      // upsert would either (a) write back to the OLD id leaving name/id out
+      // of sync, or (b) create a second row at the new id while activity
+      // logs / orders / events continue pointing at the orphaned old id.
+      // Cascade the rename to children the same way /api/accounts/retab
+      // does for a tab change.
+      const oldId = account.id;
+      const newId = buildStableAccountId(account._tabSlug, nextAccount.account);
+      const isRename = oldId && newId && oldId !== newId;
+
+      if (isRename) {
+        await upsertAccountSnapshot(toAccountSnapshot({ ...nextAccount, id: newId }));
+
+        const supabase = createServerClient();
+        const childUpdates = { account_id: newId };
+
+        await supabase
+          .from("activity_logs")
+          .update({ ...childUpdates, account_name: nextAccount.account })
+          .eq("account_id", oldId)
+          .then(() => undefined, (err) =>
+            logError("sheets/update/rename/activity_logs", err, {
+              fromId: oldId,
+              toId: newId,
+            })
+          );
+        await supabase
+          .from("orders")
+          .update({ ...childUpdates, account_name: nextAccount.account })
+          .eq("account_id", oldId)
+          .then(() => undefined, (err) =>
+            logError("sheets/update/rename/orders", err, {
+              fromId: oldId,
+              toId: newId,
+            })
+          );
+        await supabase
+          .from("events")
+          .update({ ...childUpdates, account_name: nextAccount.account })
+          .eq("account_id", oldId)
+          .then(() => undefined, (err) =>
+            logError("sheets/update/rename/events", err, {
+              fromId: oldId,
+              toId: newId,
+            })
+          );
+
+        await deleteAccountSnapshot(oldId).catch((err) =>
+          logError("sheets/update/rename/delete", err, { oldId })
+        );
+      } else {
+        await upsertAccountSnapshot(toAccountSnapshot(nextAccount));
+      }
     }
 
     // Auto-inferred accounts have rowIndex=0 (no sheet row exists yet).
