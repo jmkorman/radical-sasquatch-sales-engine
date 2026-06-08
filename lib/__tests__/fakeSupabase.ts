@@ -210,7 +210,7 @@ function makeBuilder(state: FakeSupabaseState, table: string): QueryBuilder {
       filters.push({ kind: "or", expr });
       return builder;
     },
-    order(_col: string, _opts?: { ascending?: boolean }) {
+    order() {
       // Sort is not relevant for assertion-level tests; leave as-is.
       return builder;
     },

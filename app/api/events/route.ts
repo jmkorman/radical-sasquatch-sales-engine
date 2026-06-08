@@ -174,6 +174,7 @@ export async function POST(request: NextRequest) {
     // Validation passed — re-bind to a permissive type so the existing
     // shaping code (which trusted `await request.json()` to be `any`) keeps
     // working without a structural rewrite.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const b = body as Record<string, any>;
     const status = coerceStatus(b.status);
     const quoted = toNumber(b.quoted_amount);
