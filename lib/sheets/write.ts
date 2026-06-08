@@ -1,5 +1,42 @@
 import { getSheetsClient, getSheetId } from "./client";
-import { indexToColumnLetter } from "./schema";
+import {
+  indexToColumnLetter,
+  assertHeaderRow,
+  headerValidationEnabled,
+  getExpectedHeaders,
+} from "./schema";
+
+// Per-tab in-process cache of "we validated this tab's header at time T".
+// Keeps the validation cost off the per-cell hot path while still catching a
+// drifted column on the first call within each 5-minute window.
+const HEADER_CACHE_MS = 5 * 60 * 1000;
+const headerValidatedAt = new Map<string, number>();
+
+async function ensureHeadersValid(tabName: string): Promise<void> {
+  if (!headerValidationEnabled()) return;
+  // Unknown tabs (e.g. notion_tasks-style sheets) have no expected map; skip.
+  if (!getExpectedHeaders(tabName)) return;
+
+  const now = Date.now();
+  const last = headerValidatedAt.get(tabName);
+  if (last && now - last < HEADER_CACHE_MS) return;
+
+  const sheets = getSheetsClient();
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId: getSheetId(),
+    range: `'${tabName}'!A1:Z1`,
+  });
+  const header = (response.data.values?.[0] as unknown[] | undefined) ?? [];
+  // Throws SheetHeaderMismatchError on mismatch — surfaces to the caller so
+  // the API route can fail loud before mutating a misaligned column.
+  assertHeaderRow(tabName, header);
+  headerValidatedAt.set(tabName, now);
+}
+
+// Exposed for tests; intentionally not part of the public sheet API.
+export function __resetHeaderCacheForTests(): void {
+  headerValidatedAt.clear();
+}
 
 /**
  * Update a single cell in the Google Sheet.
@@ -12,6 +49,7 @@ export async function updateCell(
   columnIndex: number,
   value: string
 ): Promise<void> {
+  await ensureHeadersValid(tabName);
   const sheets = getSheetsClient();
   const colLetter = indexToColumnLetter(columnIndex);
   const range = `'${tabName}'!${colLetter}${rowIndex}`;
@@ -55,6 +93,7 @@ export async function updateCells(
 }
 
 export async function appendRow(tabName: string, values: string[]): Promise<string | null> {
+  await ensureHeadersValid(tabName);
   const sheets = getSheetsClient();
 
   const response = await sheets.spreadsheets.values.append({
@@ -69,6 +108,7 @@ export async function appendRow(tabName: string, values: string[]): Promise<stri
 }
 
 export async function deleteRow(tabName: string, rowIndex: number): Promise<void> {
+  await ensureHeadersValid(tabName);
   const sheets = getSheetsClient();
   const spreadsheetId = getSheetId();
   const spreadsheet = await sheets.spreadsheets.get({

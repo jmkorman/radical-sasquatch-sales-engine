@@ -126,6 +126,16 @@ export async function cascadeDeleteAccount(accountId: string): Promise<void> {
       if (!isMissingRelation(err)) console.error("cascadeDeleteAccount orders:", err);
     });
 
+  // Hard-delete events for the same reason as orders — they carry revenue
+  // and orphaned bookings would inflate forecast/commission totals.
+  await supabase
+    .from("events")
+    .delete()
+    .eq("account_id", accountId)
+    .then(() => undefined, (err) => {
+      if (!isMissingRelation(err)) console.error("cascadeDeleteAccount events:", err);
+    });
+
   // Soft-delete activity logs to keep audit trail recoverable.
   await supabase
     .from("activity_logs")
@@ -156,6 +166,24 @@ export async function deleteActivityLogsForOrder(orderId: string): Promise<void>
     .ilike("note", `%[order-id:${orderId}]%`)
     .then(() => undefined, (err) => {
       if (!isMissingRelation(err)) console.error("deleteActivityLogsForOrder:", err);
+    });
+}
+
+/**
+ * Mirror of deleteActivityLogsForOrder for the events surface. Soft-deletes
+ * the `[event-id:UUID]`-marked timeline entries so the account log no longer
+ * references a deleted event. Called from the events DELETE handler.
+ */
+export async function deleteActivityLogsForEvent(eventId: string): Promise<void> {
+  if (!eventId) return;
+  const supabase = createServerClient();
+  await supabase
+    .from("activity_logs")
+    .update({ is_deleted: true })
+    .eq("source", "event")
+    .ilike("note", `%[event-id:${eventId}]%`)
+    .then(() => undefined, (err) => {
+      if (!isMissingRelation(err)) console.error("deleteActivityLogsForEvent:", err);
     });
 }
 
