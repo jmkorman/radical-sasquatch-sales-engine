@@ -11,6 +11,7 @@ import { buildStableAccountId } from "@/lib/accounts/identity";
 import { createServerClient } from "@/lib/supabase/server";
 import { logError } from "@/lib/errors/log";
 import { AnyAccount } from "@/types/accounts";
+import { applyRateLimit, LIMITS } from "@/lib/ratelimit/guard";
 import {
   getAccountColumnIndex,
   getStatusColumnIndex,
@@ -163,6 +164,9 @@ async function syncDeleteToSheets(tab: string, rowIndex: number) {
 }
 
 export async function POST(request: NextRequest) {
+  const { blocked } = applyRateLimit(request, "sheets:update", LIMITS.sheetsUpdate);
+  if (blocked) return blocked;
+
   try {
     const body = await request.json();
     const {
@@ -318,7 +322,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error("Account update error:", error);
+    await logError("sheets/update/POST", error);
     return NextResponse.json(
       { error: "Failed to update account" },
       { status: 500 }

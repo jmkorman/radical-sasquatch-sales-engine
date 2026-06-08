@@ -1,4 +1,9 @@
 {
+  "git": {
+    "deploymentEnabled": {
+      "main": true
+    }
+  },
   "crons": [
     { "path": "/api/notion/sync", "schedule": "0 0 * * *" },
     { "path": "/api/cron/stale-sweep", "schedule": "0 9 * * *" },
