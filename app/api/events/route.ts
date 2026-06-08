@@ -9,7 +9,7 @@ import {
   calculateEventCommission,
   normalizeEventRecord,
 } from "@/lib/events/helpers";
-import { insertActivityLog } from "@/lib/supabase/queries";
+import { insertActivityLog, deleteActivityLogsForEvent } from "@/lib/supabase/queries";
 import { EventRecord, EVENT_STATUSES, EventStatus } from "@/types/events";
 
 export const maxDuration = 30;
@@ -218,6 +218,9 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: "id is required" }, { status: 400 });
     }
     await deleteEvent(id);
+    // Soft-delete the matching [event-id:UUID] timeline entries so the
+    // account log doesn't keep pointing at a now-gone event.
+    await deleteActivityLogsForEvent(id);
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error("Events DELETE error:", error);

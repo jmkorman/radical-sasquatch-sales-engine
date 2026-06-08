@@ -169,6 +169,24 @@ export async function deleteActivityLogsForOrder(orderId: string): Promise<void>
     });
 }
 
+/**
+ * Mirror of deleteActivityLogsForOrder for the events surface. Soft-deletes
+ * the `[event-id:UUID]`-marked timeline entries so the account log no longer
+ * references a deleted event. Called from the events DELETE handler.
+ */
+export async function deleteActivityLogsForEvent(eventId: string): Promise<void> {
+  if (!eventId) return;
+  const supabase = createServerClient();
+  await supabase
+    .from("activity_logs")
+    .update({ is_deleted: true })
+    .eq("source", "event")
+    .ilike("note", `%[event-id:${eventId}]%`)
+    .then(() => undefined, (err) => {
+      if (!isMissingRelation(err)) console.error("deleteActivityLogsForEvent:", err);
+    });
+}
+
 export async function insertActivityLog(entry: {
   id?: string;
   account_id: string;

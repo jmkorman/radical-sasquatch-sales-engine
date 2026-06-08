@@ -13,6 +13,7 @@ vi.mock("@/lib/supabase/server", () => ({
 import {
   cascadeDeleteAccount,
   deleteActivityLogsForOrder,
+  deleteActivityLogsForEvent,
 } from "@/lib/supabase/queries";
 
 beforeEach(() => {
@@ -37,6 +38,9 @@ beforeEach(() => {
       { id: "l4", account_id: "restaurants:harmons", note: "Order updated: [order-id:o1]", is_deleted: false, source: "order" },
       { id: "l5", account_id: "restaurants:harmons", note: "Order updated: [order-id:o2]", is_deleted: false, source: "order" },
       { id: "l6", account_id: "retail:wholefoods", note: "Order updated: [order-id:o3]", is_deleted: false, source: "order" },
+      { id: "l8", account_id: "restaurants:harmons", note: "[event-id:e1]\nEvent logged: Tasting", is_deleted: false, source: "event" },
+      { id: "l9", account_id: "restaurants:harmons", note: "[event-id:e1]\nEvent updated: Tasting", is_deleted: false, source: "event" },
+      { id: "l10", account_id: "retail:wholefoods", note: "[event-id:e2]\nEvent logged: Pop-up", is_deleted: false, source: "event" },
     ],
   });
 });
@@ -58,7 +62,7 @@ describe("cascadeDeleteAccount", () => {
 
     const logs = fake.state.tables.activity_logs;
     const targetLogs = logs.filter((l) => l.account_id === "restaurants:harmons");
-    expect(targetLogs).toHaveLength(4);
+    expect(targetLogs).toHaveLength(6);
     for (const l of targetLogs) {
       expect(l.is_deleted).toBe(true);
     }
@@ -119,6 +123,41 @@ describe("deleteActivityLogsForOrder", () => {
 
   it("is a no-op for an empty order id", async () => {
     await deleteActivityLogsForOrder("");
+    expect(
+      fake.state.tables.activity_logs.every((l) => l.is_deleted === false)
+    ).toBe(true);
+  });
+});
+
+describe("deleteActivityLogsForEvent", () => {
+  it("soft-deletes only activity_logs whose note contains the event id marker AND source=event", async () => {
+    await deleteActivityLogsForEvent("e1");
+
+    const logs = fake.state.tables.activity_logs;
+    expect(logs.find((l) => l.id === "l8")?.is_deleted).toBe(true);
+    expect(logs.find((l) => l.id === "l9")?.is_deleted).toBe(true);
+    // Different event id stays live.
+    expect(logs.find((l) => l.id === "l10")?.is_deleted).toBe(false);
+    // Order/manual logs untouched.
+    expect(logs.find((l) => l.id === "l1")?.is_deleted).toBe(false);
+    expect(logs.find((l) => l.id === "l4")?.is_deleted).toBe(false);
+  });
+
+  it("ignores logs whose source is not 'event' even if they contain the marker", async () => {
+    fake.state.tables.activity_logs.push({
+      id: "lX",
+      account_id: "restaurants:harmons",
+      note: "manual mention of [event-id:e1]",
+      is_deleted: false,
+      source: "manual",
+    });
+    await deleteActivityLogsForEvent("e1");
+    const lX = fake.state.tables.activity_logs.find((l) => l.id === "lX");
+    expect(lX?.is_deleted).toBe(false);
+  });
+
+  it("is a no-op for an empty event id", async () => {
+    await deleteActivityLogsForEvent("");
     expect(
       fake.state.tables.activity_logs.every((l) => l.is_deleted === false)
     ).toBe(true);
