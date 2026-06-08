@@ -11,6 +11,8 @@ import {
 } from "@/lib/events/helpers";
 import { insertActivityLog, deleteActivityLogsForEvent } from "@/lib/supabase/queries";
 import { EventRecord, EVENT_STATUSES, EventStatus } from "@/types/events";
+import { applyRateLimit, LIMITS } from "@/lib/ratelimit/guard";
+import { logError } from "@/lib/errors/log";
 
 export const maxDuration = 30;
 
@@ -70,7 +72,11 @@ async function logEventActivity(event: EventRecord, kind: "created" | "updated")
       counts_as_contact: false,
     });
   } catch (error) {
-    console.error("Event activity log error:", error);
+    await logError("events/activity-log", error, {
+      eventId: event.id,
+      accountId: event.account_id,
+      kind,
+    });
   }
 }
 
@@ -146,13 +152,16 @@ export async function GET(request: NextRequest) {
     const events = await getEvents(accountId, accountName);
     return NextResponse.json(events);
   } catch (error) {
-    console.error("Events GET error:", error);
+    await logError("events/GET", error);
     return NextResponse.json([]);
   }
 }
 
 export async function POST(request: NextRequest) {
   if (!supabaseConfigured()) return configError();
+
+  const { blocked } = applyRateLimit(request, "events:write", LIMITS.events);
+  if (blocked) return blocked;
 
   let body: unknown;
   try {
@@ -213,13 +222,16 @@ export async function POST(request: NextRequest) {
     await logEventActivity(created, "created");
     return NextResponse.json(created, { status: 201 });
   } catch (error) {
-    console.error("Events POST error:", error);
+    await logError("events/POST", error);
     return NextResponse.json({ error: describeError(error) }, { status: 500 });
   }
 }
 
 export async function PATCH(request: NextRequest) {
   if (!supabaseConfigured()) return configError();
+
+  const { blocked } = applyRateLimit(request, "events:write", LIMITS.events);
+  if (blocked) return blocked;
 
   let body: unknown;
   try {
@@ -277,13 +289,16 @@ export async function PATCH(request: NextRequest) {
     await logEventActivity(updated, "updated");
     return NextResponse.json(updated);
   } catch (error) {
-    console.error("Events PATCH error:", error);
+    await logError("events/PATCH", error);
     return NextResponse.json({ error: describeError(error) }, { status: 500 });
   }
 }
 
 export async function DELETE(request: NextRequest) {
   if (!supabaseConfigured()) return configError();
+
+  const { blocked } = applyRateLimit(request, "events:write", LIMITS.events);
+  if (blocked) return blocked;
 
   try {
     const id = request.nextUrl.searchParams.get("id");
@@ -296,7 +311,7 @@ export async function DELETE(request: NextRequest) {
     await deleteActivityLogsForEvent(id);
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error("Events DELETE error:", error);
+    await logError("events/DELETE", error);
     return NextResponse.json({ error: describeError(error) }, { status: 500 });
   }
 }
